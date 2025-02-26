@@ -10,7 +10,7 @@
         "file-type": "^19.0.0",
         "graphql": "^16.8.2",
         "istextorbinary": "^9.5.0",
-        "next": "^13.0.0 || ^14.0.0"
+        "next": "^13.0.0 || ^14.0.0 || ^15.0.0"
     },
     "description": "The middleware and Upload scalar in this package enable GraphQL multipart requests (file uploads via queries and mutations) in your Apollo Server Next.js integration.",
     "devDependencies": {
