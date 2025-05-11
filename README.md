@@ -1,5 +1,7 @@
 # graphql-upload-nextjs
 
+[![Integration Test](https://github.com/lafittemehdy/graphql-upload-nextjs/actions/workflows/integration-test.yml/badge.svg)](https://github.com/lafittemehdy/graphql-upload-nextjs/actions/workflows/integration-test.yml)
+
 `graphql-upload-nextjs` is a robust package that enables seamless file uploads in a Next.js environment using GraphQL. This package is designed to integrate easily with Apollo Server, allowing you to handle file uploads in your GraphQL mutations with ease and efficiency.
 
 ## Features
