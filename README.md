@@ -63,6 +63,7 @@ const typeDefs = gql`
     }
     type Mutation {
         uploadFile(file: Upload!): File!
+        uploadFiles(files: [Upload!]!): [File!]!
     }
 `
 
@@ -95,6 +96,34 @@ const resolvers = {
                 // You should handle any errors that occur during file upload more gracefully.
                 console.error('Error handling file upload:', error)
                 throw new Error('Failed to handle file upload.')
+            }
+        },
+        uploadFiles: async (_parent: void, { files }: { files: [Promise<File>] }, { ip }: Context) => {
+            try {
+                const results = await Promise.all(
+                    files.map(async (file) => {
+                        const { createReadStream, encoding, fileName, fileSize, mimeType } = await file;
+                        return new Promise((resolve, reject) => {
+                            pipeline(
+                                createReadStream(),
+                                createWriteStream(`./public/${fileName}`), // Store in 'public' for simplicity
+                                (error) => {
+                                    if (error) {
+                                        console.error('File upload pipeline error:', error);
+                                        reject(new Error('Error during file upload.'));
+                                    } else {
+                                        console.log(`${ip} successfully uploaded ${fileName}`);
+                                        resolve({ encoding, fileName, fileSize, mimeType, uri: `http://localhost:3000/${fileName}` });
+                                    }
+                                }
+                            );
+                        });
+                    })
+                );
+                return results;
+            } catch (error) {
+                console.error('Error handling multiple file uploads:', error);
+                throw new Error('Failed to handle multiple file uploads.');
             }
         }
     },
@@ -169,6 +198,104 @@ export const POST = requestHandler
 export const OPTIONS = requestHandler
 ```
 
+### Executing the Mutations
+
+When sending requests to your GraphQL server, you'll need to structure your mutation and variables correctly. This package adheres to the [GraphQL multipart request specification](https://github.com/jaydenseric/graphql-multipart-request-spec) for file uploads.
+
+**Single File Upload (`uploadFile` mutation):**
+
+*GraphQL Operation:*
+```graphql
+mutation UploadFile($file: Upload!) {
+  uploadFile(file: $file) {
+    fileName
+    mimeType
+    encoding
+    uri
+    fileSize
+  }
+}
+```
+
+*GraphQL Variables:*
+The key in the variables object (`"file"`) must match the argument name in your GraphQL mutation (`$file`).
+When using a GraphQL client library (e.g., Apollo Client, urql, Relay):
+*   You'll typically pass the browser's `File` object (e.g., from an `<input type="file">`) directly as the value for the `file` variable.
+*   The client library automatically constructs the multipart/form-data request according to the GraphQL multipart request specification.
+
+The `{"file": null}` structure illustrates how the `operations` part of the multipart request is formed, where `null` acts as a placeholder for the actual file content that is sent in a separate part of the request. You generally don't need to construct this manually when using a client library.
+
+*Example with a client library (conceptual):*
+```javascript
+// In your frontend code
+import { gql, useMutation } from '@apollo/client'; // Or your client of choice
+
+const UPLOAD_FILE_MUTATION = gql`
+  mutation UploadFile($file: Upload!) {
+    uploadFile(file: $file) { fileName }
+  }
+`;
+
+function MyUploader() {
+  const [uploadFileMutation] = useMutation(UPLOAD_FILE_MUTATION);
+
+  const handleChange = (event) => {
+    const file = event.target.files[0];
+    if (file) {
+      uploadFileMutation({ variables: { file } });
+    }
+  };
+
+  return <input type="file" onChange={handleChange} />;
+}
+```
+
+**Multiple File Upload (`uploadFiles` mutation):**
+
+*GraphQL Operation:*
+```graphql
+mutation UploadFiles($files: [Upload!]!) {
+  uploadFiles(files: $files) {
+    fileName
+    mimeType
+    encoding
+    uri
+    fileSize
+  }
+}
+```
+
+*GraphQL Variables:*
+Similarly, the key `"files"` must match the argument name (`$files`).
+When using a GraphQL client library:
+*   You'll pass an array of `File` objects as the value for the `files` variable.
+*   The client library handles the multipart request construction.
+
+The `{"files": [null, null]}` structure illustrates the `operations` part, with `null` placeholders for file content sent separately.
+
+*Example with a client library (conceptual):*
+```javascript
+// In your frontend code
+const UPLOAD_FILES_MUTATION = gql`
+  mutation UploadFiles($files: [Upload!]!) {
+    uploadFiles(files: $files) { fileName }
+  }
+`;
+
+function MyMultiUploader() {
+  const [uploadFilesMutation] = useMutation(UPLOAD_FILES_MUTATION);
+
+  const handleChange = (event) => {
+    const files = Array.from(event.target.files);
+    if (files.length > 0) {
+      uploadFilesMutation({ variables: { files } });
+    }
+  };
+
+  return <input type="file" multiple onChange={handleChange} />;
+}
+```
+
 ## Example
 
 An example project demonstrating how to integrate GraphQL file uploads into a typical Next.js starter application is available in the repository under `graphql-upload-nextjs/examples/example-graphql-upload-nextjs/`. This example uses a relative path to the main package for live code testing and development.
@@ -193,7 +320,7 @@ Contributions are welcome! If you find any issues or have suggestions for improv
 
 ## License
 
-This project is licensed under the MIT License. See the [LICENSE](https://github.com/hafaiedhmehdy/graphql-upload-nextjs/blob/master/README.md) file for more information.
+This project is licensed under the MIT License. See the [LICENSE](https://github.com/lafittemehdy/graphql-upload-nextjs/blob/master/LICENSE) file for more information.
 
 ## Acknowledgements
 

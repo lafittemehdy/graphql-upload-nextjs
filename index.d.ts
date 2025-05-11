@@ -1,7 +1,6 @@
-/// <reference types="node" />
-/// <reference types="node" />
-import { GraphQLError, GraphQLScalarType } from 'graphql';
+import { GraphQLScalarType, GraphQLError } from 'graphql';
 import { type NextRequest, NextResponse } from 'next/server.js';
+import type { GraphQLResponse } from '@apollo/server';
 export interface File {
     createReadStream: () => NodeJS.ReadableStream;
     encoding: string;
@@ -21,7 +20,7 @@ export interface FormDataFile {
 export declare class Upload {
     file?: File;
     promise: Promise<File>;
-    reject: (reason?: any) => void;
+    reject: (reason?: Error | string) => void;
     resolve: (file: File) => void;
     constructor();
 }
@@ -43,7 +42,7 @@ export declare function bufferToStream(buffer: Buffer): NodeJS.ReadableStream;
  * @param input - The JSON string to sanitize and validate.
  * @returns The parsed JSON object.
  */
-export declare function sanitizeAndValidateJSON(input: string): any;
+export declare function sanitizeAndValidateJSON(input: string): unknown;
 /**
  * Main function to handle file uploads in a GraphQL request.
  * @param request - The incoming request containing form data.
@@ -52,16 +51,16 @@ export declare function sanitizeAndValidateJSON(input: string): any;
  * @param settings - The settings for file upload, including maxFileSize and allowedTypes.
  * @returns A response containing the result of the GraphQL operation.
  */
-export declare function uploadProcess(request: NextRequest, context: any, server: {
-    executeOperation: (_: any, __: any) => Promise<any>;
+interface ServerExecuteOperationParams {
+    query: string;
+    variables: Record<string, unknown>;
+}
+export declare function uploadProcess<TContext extends Record<string, unknown>>(request: NextRequest, contextValueInput: TContext, server: {
+    executeOperation: (params: ServerExecuteOperationParams, context: {
+        contextValue: TContext;
+    }) => Promise<GraphQLResponse<TContext>>;
 }, settings: {
     allowedTypes: string[];
     maxFileSize: number;
-}): Promise<NextResponse<{
-    error: string;
-}> | NextResponse<{
-    data: any;
-    errors: any;
-}> | NextResponse<{
-    results: any[];
-}> | undefined>;
+}): Promise<NextResponse<any>>;
+export {};

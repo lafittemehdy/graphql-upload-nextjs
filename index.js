@@ -1,4 +1,4 @@
-import { GraphQLError, GraphQLScalarType } from 'graphql';
+import { GraphQLScalarType, GraphQLError } from 'graphql';
 import { NextResponse } from 'next/server.js';
 import { fileTypeFromBuffer } from 'file-type';
 import { isText } from 'istextorbinary';
@@ -32,9 +32,10 @@ export const GraphQLUpload = new GraphQLScalarType({
  */
 async function extractFiles(formData) {
     const files = {};
-    for (const [key, value] of formData.entries()) {
-        if (value instanceof File) {
-            files[key] = value;
+    // Convert iterator to array to satisfy TypeScript's iteration rules for older targets
+    for (const [key, value] of Array.from(formData.entries())) {
+        if (value instanceof File) { // Check if it's a File object (from browser FormData)
+            files[key] = value; // Cast to our FormDataFile interface
         }
     }
     return files;
@@ -45,10 +46,21 @@ async function extractFiles(formData) {
  * @returns A promise that resolves to a buffer.
  */
 export async function streamToBuffer(stream) {
-    const chunks = [];
+    const chunks = []; // Store as Buffer objects
     for await (const chunk of stream) {
-        chunks.push(chunk);
+        if (Buffer.isBuffer(chunk)) {
+            chunks.push(chunk);
+        }
+        else if (typeof chunk === 'string') {
+            chunks.push(Buffer.from(chunk)); // Convert string chunks to Buffer
+        }
+        else {
+            // Handle or ignore other chunk types if necessary
+            // For now, we assume string or Buffer as common stream chunk types
+            chunks.push(Buffer.from(chunk)); // Attempt conversion for other types
+        }
     }
+    // I can’t sleep at night when I think about this line 👀
     return Buffer.concat(chunks);
 }
 /**
@@ -82,27 +94,73 @@ export function sanitizeAndValidateJSON(input) {
     }
 }
 /**
+ * Sets a value at a deep path within an object.
+ * Creates intermediate objects/arrays if they don't exist.
+ * @param obj - The object to modify.
+ * @param path - The path string (e.g., "variables.files.0").
+ * @param value - The value to set.
+ */
+function setValueAtPath(obj, path, value) {
+    const keys = path.split('.');
+    let current = obj;
+    for (let i = 0; i < keys.length - 1; i++) {
+        const key = keys[i];
+        const nextKeyIsArrayIndex = /^\d+$/.test(keys[i + 1]); // Check if next key is a number (array index)
+        if (!current[key]) {
+            current[key] = nextKeyIsArrayIndex ? [] : {};
+        }
+        else if (nextKeyIsArrayIndex && !Array.isArray(current[key])) {
+            // If we expect an array but found an object, this is a path conflict.
+            // Or if we expect an object but found an array.
+            // For simplicity, we'll overwrite, but a real app might error here.
+            console.warn(`Path conflict at ${key}: expected ${nextKeyIsArrayIndex ? "array" : "object"}, found ${typeof current[key]}. Overwriting.`);
+            current[key] = nextKeyIsArrayIndex ? [] : {};
+        }
+        else if (!nextKeyIsArrayIndex && typeof current[key] !== 'object') {
+            console.warn(`Path conflict at ${key}: expected object, found ${typeof current[key]}. Overwriting.`);
+            current[key] = {};
+        }
+        current = current[key];
+    }
+    current[keys[keys.length - 1]] = value;
+}
+/**
  * Process an individual file upload.
  * @param file - The file to be uploaded.
- * @param variableName - The name of the variable associated with the file.
- * @param operations - The GraphQL operations containing the query and variables.
  * @param allowedTypes - The list of allowed MIME types.
+ * @returns A Promise that resolves to an Upload instance.
  */
-async function processUpload(file, variableName, operations, allowedTypes) {
+async function processUpload(file, allowedTypes) {
     // Validate file properties
     if (!file.name || !file.size || !file.type) {
         throw new Error('Invalid file properties');
     }
     const stream = await file.stream();
     const buffer = await streamToBuffer(stream);
-    const fileType = await fileTypeFromBuffer(buffer);
+    // Node.js Buffer is a Uint8Array, fileTypeFromBuffer should accept it.
+    // If type errors persist here, it might be due to conflicting @types versions or specific library nuances.
+    // Convert Node.js Buffer to a Uint8Array view on its underlying ArrayBuffer
+    // This is often needed to satisfy strict typings of libraries expecting a generic Uint8Array.
+    const uint8ArrayForFileType = new Uint8Array(buffer.buffer, buffer.byteOffset, buffer.byteLength);
+    const fileType = await fileTypeFromBuffer(uint8ArrayForFileType);
     // Determine the MIME type
     let mimeType = file.type;
     if (fileType) {
         mimeType = fileType.mime;
     }
-    else if (isText(null, buffer)) {
-        mimeType = 'text/plain';
+    else {
+        // Use the Promise-based version of isText
+        try {
+            const isTextResult = await isText(file.name, buffer);
+            // isText returns boolean | null. Treat null as not text.
+            if (isTextResult === true) {
+                mimeType = 'text/plain';
+            }
+        }
+        catch (err) {
+            // Log the error but proceed, as mimeType might still be file.type
+            console.warn(`[processUpload] isText check failed for ${file.name}:`, err);
+        }
     }
     // Check if the file's MIME type is allowed
     if (!allowedTypes.includes(mimeType)) {
@@ -116,59 +174,99 @@ async function processUpload(file, variableName, operations, allowedTypes) {
         encoding: 'binary',
         createReadStream: () => bufferToStream(buffer)
     });
-    operations.variables[variableName] = upload;
+    return upload;
 }
-/**
- * Main function to handle file uploads in a GraphQL request.
- * @param request - The incoming request containing form data.
- * @param context - The context for the server operation.
- * @param server - The GraphQL server instance.
- * @param settings - The settings for file upload, including maxFileSize and allowedTypes.
- * @returns A response containing the result of the GraphQL operation.
- */
-export async function uploadProcess(request, context, server, settings) {
+// The server.executeOperation returns a Promise<GraphQLResponse<TContext>>
+// GraphQLResponse is a discriminated union from @apollo/server
+export async function uploadProcess(request, contextValueInput, server, settings) {
     try {
         // Extract form data from the request
         const formData = await request.formData();
         const files = await extractFiles(formData);
         // Parse and validate the map and operations from the form data
-        const map = sanitizeAndValidateJSON(formData.get('map'));
-        const operations = sanitizeAndValidateJSON(formData.get('operations'));
-        const uploadPromises = [];
-        // Process each file upload based on the map
-        for (const fileKey of Object.keys(map)) {
-            const file = files[fileKey];
-            // Check if the file size exceeds the maximum allowed size
+        const mapString = formData.get('map');
+        const operationsString = formData.get('operations');
+        if (!mapString || !operationsString) {
+            console.error('[uploadProcess] Missing map or operations in form data.');
+            throw new Error('Missing map or operations in form data.');
+        }
+        const map = sanitizeAndValidateJSON(mapString);
+        const operations = sanitizeAndValidateJSON(operationsString);
+        console.log('[uploadProcess] Parsed map:', JSON.stringify(map, null, 2));
+        console.log('[uploadProcess] Keys of extracted files from FormData:', Object.keys(files));
+        console.log('[uploadProcess] Initial operations.variables:', JSON.stringify(operations.variables, null, 2));
+        const fileProcessingPromises = [];
+        // Initialize operations.variables if it doesn't exist (it should from sanitizeAndValidateJSON if ops string was valid)
+        if (!operations.variables) {
+            operations.variables = {};
+        }
+        for (const fileKeyInMap of Object.keys(map)) {
+            const file = files[fileKeyInMap];
+            if (!file) {
+                console.warn(`[uploadProcess] File with key "${fileKeyInMap}" (from map) not found in extracted FormData files. Path(s) in map: ${map[fileKeyInMap].join(', ')}`);
+                // If a file in the map isn't found, the corresponding operations.variables path will remain as `null` (or its original value).
+                // This will likely cause the "Expected non-nullable type Upload! not to be null" error downstream for that specific path.
+                continue;
+            }
             if (file.size > settings.maxFileSize) {
-                return NextResponse.json({ error: `File size is too large. Maximum allowed size is ${settings.maxFileSize / (1024 * 1024)}MB.` });
+                return NextResponse.json({ error: `File ${file.name} size is too large. Maximum allowed size is ${settings.maxFileSize / (1024 * 1024)}MB.` });
             }
-            const pathSegment = map[fileKey][0];
-            const variableName = pathSegment.split('.').slice(-1)[0];
-            uploadPromises.push(processUpload(file, variableName, operations, settings.allowedTypes));
+            const variablePaths = map[fileKeyInMap]; // e.g., ["variables.files.0"]
+            const filePromise = processUpload(file, settings.allowedTypes)
+                .then(uploadInstance => {
+                console.log(`[uploadProcess] Processed file for map key "${fileKeyInMap}", got Upload instance: ${!!uploadInstance}`);
+                variablePaths.forEach(path => {
+                    console.log(`[uploadProcess] Setting path "${path}" to Upload instance for map key "${fileKeyInMap}"`);
+                    setValueAtPath(operations, path, uploadInstance); // Pass 'operations' object itself
+                });
+            })
+                .catch(error => {
+                console.error(`[uploadProcess] Error processing file ${file.name} for map key ${fileKeyInMap}:`, error);
+                throw new Error(`Failed to process file ${file.name}: ${error.message}`); // Propagate to fail Promise.all
+            });
+            fileProcessingPromises.push(filePromise);
         }
-        // Wait for all upload promises to resolve
-        await Promise.all(uploadPromises);
-        // Remove any variables that were not set
-        for (const key in operations.variables) {
-            if (!operations.variables[key]) {
-                delete operations.variables[key];
+        await Promise.all(fileProcessingPromises);
+        console.log('[uploadProcess] operations.variables AFTER processing and BEFORE executeOperation:', JSON.stringify(operations.variables, (key, value) => {
+            if (value instanceof Upload) {
+                return `[Upload Instance - resolved file: ${!!value.file}]`;
             }
-        }
+            if (value && typeof value.then === 'function') {
+                return '[Promise]'; // Don't try to stringify promises directly
+            }
+            return value;
+        }, 2));
+        // The section to remove unset variables might be problematic if a legitimate variable was meant to be null
+        // and wasn't an upload. For now, let's comment it out to simplify debugging the upload part.
+        // for (const key in operations.variables) {
+        //     if (!operations.variables[key]) {
+        //         // This could remove a legitimate null if files[0] was null and not replaced
+        //         console.log(`[uploadProcess] Removing unset variable: ${key}`);
+        //         delete operations.variables[key];
+        //     }
+        // }
         // Execute the GraphQL operation
-        const response = await server.executeOperation({ query: operations.query, variables: operations.variables }, { contextValue: await context });
+        const response = await server.executeOperation({ query: operations.query, variables: operations.variables }, // Pass the modified operations.variables
+        { contextValue: contextValueInput });
         // Return the appropriate response based on the result kind
+        // The 'response' is now of type GraphQLResponse from @apollo/server
         if (response.body.kind === 'single') {
-            const { data, errors } = response.body.singleResult;
-            return NextResponse.json({ data, errors });
+            return NextResponse.json(response.body.singleResult);
         }
         else if (response.body.kind === 'incremental') {
             const { initialResult, subsequentResults } = response.body;
-            const results = [initialResult];
+            const collectedSubsequentResults = [];
             for await (const result of subsequentResults) {
-                results.push(result);
+                collectedSubsequentResults.push(result);
             }
-            return NextResponse.json({ results });
+            return NextResponse.json({
+                initialResult,
+                subsequentResults: collectedSubsequentResults,
+            });
         }
+        // Fallback for unexpected response body kind
+        console.error('[uploadProcess] Unexpected response body kind:', response.body?.kind);
+        return NextResponse.json({ error: 'Unexpected server response format' }, { status: 500 });
     }
     catch (error) {
         console.error('Error processing upload:', error);

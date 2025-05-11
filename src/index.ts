@@ -1,5 +1,6 @@
-import { GraphQLError, GraphQLScalarType } from 'graphql'
+import { GraphQLScalarType, GraphQLError } from 'graphql'
 import { type NextRequest, NextResponse } from 'next/server.js'
+import type { GraphQLResponse } from '@apollo/server'
 import { fileTypeFromBuffer } from 'file-type'
 import { isText } from 'istextorbinary'
 
@@ -22,10 +23,14 @@ export interface FormDataFile {
     type: string
 }
 
+/**
+ * Represents an instance of a file upload.
+ * Holds a promise that resolves with the file details once processed.
+ */
 export class Upload {
     file?: File
     promise: Promise<File>
-    reject: (reason?: any) => void = () => { }
+    reject: (reason?: Error | string) => void = () => { }
     resolve: (file: File) => void = () => { }
 
     constructor() {
@@ -48,39 +53,30 @@ export const GraphQLUpload = new GraphQLScalarType({
     serialize() { throw new GraphQLError('Upload serialization unsupported.') }
 })
 
-/**
- * Extract files from form data.
- * @param formData - The form data containing file entries.
- * @returns An object mapping file keys to FormDataFile objects.
- */
 async function extractFiles(formData: FormData): Promise<{ [key: string]: FormDataFile }> {
     const files: { [key: string]: FormDataFile } = {}
-    for (const [key, value] of formData.entries()) {
-        if (value instanceof File) {
-            files[key] = value
+    for (const [key, value] of Array.from(formData.entries())) {
+        if (value instanceof globalThis.File) {
+            files[key] = value as FormDataFile;
         }
     }
     return files
 }
 
-/**
- * Stream to buffer utility function.
- * @param stream - The readable stream.
- * @returns A promise that resolves to a buffer.
- */
 export async function streamToBuffer(stream: NodeJS.ReadableStream): Promise<Buffer> {
-    const chunks: Uint8Array[] = []
+    const chunks: Buffer[] = []
     for await (const chunk of stream) {
-        chunks.push(chunk as Uint8Array)
+        if (Buffer.isBuffer(chunk)) {
+            chunks.push(chunk);
+        } else if (typeof chunk === 'string') {
+            chunks.push(Buffer.from(chunk));
+        } else {
+            chunks.push(Buffer.from(chunk as Uint8Array));
+        }
     }
-    return Buffer.concat(chunks)
+    return Buffer.concat(chunks as unknown as readonly Uint8Array[]);
 }
 
-/**
- * Buffer to stream utility function.
- * @param buffer - The buffer.
- * @returns A readable stream.
- */
 export function bufferToStream(buffer: Buffer): NodeJS.ReadableStream {
     const { Readable } = require('stream')
     const stream = new Readable()
@@ -89,55 +85,64 @@ export function bufferToStream(buffer: Buffer): NodeJS.ReadableStream {
     return stream
 }
 
-/**
- * Sanitize and validate JSON input.
- * @param input - The JSON string to sanitize and validate.
- * @returns The parsed JSON object.
- */
-export function sanitizeAndValidateJSON(input: string): any {
+export function sanitizeAndValidateJSON(input: string): unknown {
     try {
         const result = JSON.parse(input)
         if (typeof result !== 'object' || result === null) {
-            throw new Error('Invalid JSON structure')
+            throw new Error('Invalid JSON structure: not an object.')
         }
         return result
     } catch (error) {
-        console.error('Error parsing JSON:', error)
-        throw new Error('Invalid JSON input')
+        throw new Error(`Invalid JSON input: ${(error as Error).message}`)
     }
 }
 
-/**
- * Process an individual file upload.
- * @param file - The file to be uploaded.
- * @param variableName - The name of the variable associated with the file.
- * @param operations - The GraphQL operations containing the query and variables.
- * @param allowedTypes - The list of allowed MIME types.
- */
+function setValueAtPath(obj: Record<string, unknown>, path: string, value: unknown): void {
+    const keys = path.split('.');
+    let current: any = obj;
+    for (let i = 0; i < keys.length - 1; i++) {
+        const key = keys[i];
+        const nextKeyIsArrayIndex = /^\d+$/.test(keys[i + 1]);
+
+        if (!current[key] || typeof current[key] !== (nextKeyIsArrayIndex ? 'object' : 'object')) {
+            if (current[key] && ( (nextKeyIsArrayIndex && !Array.isArray(current[key])) || (!nextKeyIsArrayIndex && Array.isArray(current[key])) ) ) {
+                // Path conflict, overwriting.
+            }
+            current[key] = nextKeyIsArrayIndex ? [] : {};
+        }
+        current = current[key];
+    }
+    current[keys[keys.length - 1]] = value;
+}
+
 async function processUpload(
     file: FormDataFile,
-    variableName: string,
-    operations: { query: string; variables: Record<string, any> },
     allowedTypes: string[]
-): Promise<void> {
-    // Validate file properties
-    if (!file.name || !file.size || !file.type) {
-        throw new Error('Invalid file properties')
+): Promise<Upload> {
+    if (!file.name || typeof file.size !== 'number' || !file.type) {
+        throw new Error('Invalid file properties: name, size, or type is missing or invalid.')
     }
 
     const stream = await (file as FileStream).stream()
     const buffer = await streamToBuffer(stream)
-    const fileType = await fileTypeFromBuffer(buffer)
+    
+    const uint8ArrayForFileType = new Uint8Array(buffer.buffer, buffer.byteOffset, buffer.byteLength);
+    const fileTypeInfo = await fileTypeFromBuffer(uint8ArrayForFileType);
 
-    // Determine the MIME type
-    let mimeType = file.type
-    if (fileType) {
-        mimeType = fileType.mime
-    } else if (isText(null, buffer)) {
-        mimeType = 'text/plain'
+    let mimeType = file.type;
+    if (fileTypeInfo) {
+        mimeType = fileTypeInfo.mime;
+    } else {
+        try {
+            const isTextResult = await isText(file.name, buffer);
+            if (isTextResult === true) {
+                mimeType = 'text/plain';
+            }
+        } catch (err) {
+            // isText check failed, proceed with original mimeType
+        }
     }
 
-    // Check if the file's MIME type is allowed
     if (!allowedTypes.includes(mimeType)) {
         throw new Error(`File type ${mimeType} is not allowed. Allowed types: ${allowedTypes.join(', ')}`)
     }
@@ -150,77 +155,107 @@ async function processUpload(
         encoding: 'binary',
         createReadStream: () => bufferToStream(buffer)
     })
-    operations.variables[variableName] = upload
+    return upload;
+}
+
+interface ServerExecuteOperationParams {
+    query: string;
+    variables: Record<string, unknown>;
 }
 
 /**
- * Main function to handle file uploads in a GraphQL request.
- * @param request - The incoming request containing form data.
- * @param context - The context for the server operation.
- * @param server - The GraphQL server instance.
- * @param settings - The settings for file upload, including maxFileSize and allowedTypes.
- * @returns A response containing the result of the GraphQL operation.
+ * Processes a GraphQL multipart request with file uploads.
  */
-export async function uploadProcess(
+export async function uploadProcess<TContext extends Record<string, unknown>>(
     request: NextRequest,
-    context: any,
-    server: { executeOperation: (_: any, __: any) => Promise<any> },
+    contextValueInput: TContext,
+    server: {
+        executeOperation: (
+            params: ServerExecuteOperationParams,
+            context: { contextValue: TContext }
+        ) => Promise<GraphQLResponse<TContext>>
+    },
     settings: { allowedTypes: string[], maxFileSize: number }
-) {
+): Promise<NextResponse<any>> {
     try {
-        // Extract form data from the request
         const formData: FormData = await request.formData()
         const files = await extractFiles(formData)
 
-        // Parse and validate the map and operations from the form data
-        const map: Record<string, string[]> = sanitizeAndValidateJSON(formData.get('map') as string)
-        const operations: { query: string; variables: Record<string, any> } = sanitizeAndValidateJSON(formData.get('operations') as string)
+        const mapString = formData.get('map') as string;
+        const operationsString = formData.get('operations') as string;
 
-        const uploadPromises: Promise<void>[] = []
+        if (!mapString || !operationsString) {
+            throw new Error('Missing map or operations in form data.');
+        }
+        const map = sanitizeAndValidateJSON(mapString) as Record<string, string[]>;
+        const operations = sanitizeAndValidateJSON(operationsString) as { query: string; variables: Record<string, unknown | null> };
 
-        // Process each file upload based on the map
-        for (const fileKey of Object.keys(map)) {
-            const file = files[fileKey]
-            // Check if the file size exceeds the maximum allowed size
+        const fileProcessingPromises: Promise<void>[] = [];
+
+        if (!operations.variables) {
+            operations.variables = {};
+        }
+
+        for (const fileKeyInMap of Object.keys(map)) {
+            const file = files[fileKeyInMap];
+            if (!file) {
+                map[fileKeyInMap].forEach(path => {
+                     setValueAtPath(operations, path, null);
+                });
+                continue;
+            }
+
             if (file.size > settings.maxFileSize) {
-                return NextResponse.json({ error: `File size is too large. Maximum allowed size is ${settings.maxFileSize / (1024 * 1024)}MB.` })
+                return NextResponse.json({ errors: [{ message: `File ${file.name} size is too large. Maximum allowed size is ${settings.maxFileSize / (1024 * 1024)}MB.` }] }, { status: 413 });
             }
-            const pathSegment = map[fileKey][0]
-            const variableName = pathSegment.split('.').slice(-1)[0]
-            uploadPromises.push(processUpload(file, variableName, operations, settings.allowedTypes))
+
+            const variablePaths = map[fileKeyInMap];
+
+            const filePromise = processUpload(file, settings.allowedTypes)
+                .then(uploadInstance => {
+                    variablePaths.forEach(path => {
+                        setValueAtPath(operations, path, uploadInstance);
+                    });
+                })
+                .catch(error => {
+                    variablePaths.forEach(path => {
+                         const uploadError = new Upload();
+                         uploadError.reject(new Error(`Failed to process file ${file.name}: ${(error as Error).message}`));
+                         setValueAtPath(operations, path, uploadError);
+                    });
+                    throw new Error(`Failed to process file ${file.name}: ${(error as Error).message}`);
+                });
+
+            fileProcessingPromises.push(filePromise);
         }
 
-        // Wait for all upload promises to resolve
-        await Promise.all(uploadPromises)
-
-        // Remove any variables that were not set
-        for (const key in operations.variables) {
-            if (!operations.variables[key]) {
-                delete operations.variables[key]
-            }
+        try {
+            await Promise.all(fileProcessingPromises);
+        } catch (processingError) {
+            // Individual file processing errors are handled by rejecting Upload.promise.
         }
 
-        // Execute the GraphQL operation
         const response = await server.executeOperation(
             { query: operations.query, variables: operations.variables },
-            { contextValue: await context }
+            { contextValue: contextValueInput }
         )
 
-        // Return the appropriate response based on the result kind
         if (response.body.kind === 'single') {
-            const { data, errors } = response.body.singleResult
-            return NextResponse.json({ data, errors })
+            return NextResponse.json(response.body.singleResult);
         } else if (response.body.kind === 'incremental') {
-            const { initialResult, subsequentResults } = response.body
-            const results = [initialResult]
+            const { initialResult, subsequentResults } = response.body;
+            const collectedSubsequentResults = [];
             for await (const result of subsequentResults) {
-                results.push(result)
+                collectedSubsequentResults.push(result);
             }
-            return NextResponse.json({ results })
+            return NextResponse.json({
+                initialResult,
+                subsequentResults: collectedSubsequentResults,
+            });
         }
+        return NextResponse.json({ errors: [{ message: 'Unexpected server response format' }] }, { status: 500 });
     } catch (error) {
-        console.error('Error processing upload:', error)
-        const errorMessage = error instanceof Error ? error.message : 'Unknown error'
-        return NextResponse.json({ error: `Error processing upload: ${errorMessage}` })
+        const errorMessage = error instanceof Error ? error.message : 'Unknown error during upload processing.'
+        return NextResponse.json({ errors: [{ message: `Error processing upload: ${errorMessage}` }] }, { status: 500 });
     }
 }

@@ -1,0 +1,77 @@
+name: Integration Test
+
+on:
+  push:
+    branches: [ main ] # Or your default branch
+  pull_request:
+    branches: [ main ] # Or your default branch
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20' # Or your preferred Node.js version
+
+      - name: Install root dependencies
+        run: npm install
+
+      - name: Build package
+        run: npm run build # Assuming you have a build script in your root package.json
+
+      - name: Install example app dependencies
+        working-directory: ./examples/example-graphql-upload-nextjs
+        run: npm install
+
+      - name: Start Next.js example app
+        working-directory: ./examples/example-graphql-upload-nextjs
+        run: npm run dev & # Runs in background
+        env:
+          PORT: 3000 # Ensure it runs on the expected port
+
+      - name: Wait for Next.js app to start
+        run: |
+          echo "Waiting for Next.js app to be ready..."
+          timeout 60s bash -c 'until curl -sSf http://localhost:3000/api/graphql -X POST -H "Content-Type: application/json" -d "{\"query\":\"query{default}\"}" | grep -q "true"; do echo "Still waiting..."; sleep 2; done'
+          echo "Next.js app is ready."
+        shell: bash
+
+      - name: Create dummy file for upload
+        run: echo "This is a test file." > test-upload.txt
+
+      - name: Run integration test script
+        id: integration_test
+        run: |
+          # We will create this script in the next step.
+          # For now, let's assume it's at scripts/integration-test.js
+          # and it will exit with 0 on success, non-0 on failure.
+          # It will also check if the file exists in examples/example-graphql-upload-nextjs/public/
+          if [ -f ./scripts/integration-test.mjs ]; then
+            node ./scripts/integration-test.mjs
+          else
+            echo "Integration test script not found at ./scripts/integration-test.mjs"
+            exit 1
+          fi
+        env:
+          NEXT_PUBLIC_GRAPHQL_URL: http://localhost:3000/api/graphql
+          UPLOAD_FILE_PATH: ./test-upload.txt
+          EXPECTED_UPLOAD_DIR: ./examples/example-graphql-upload-nextjs/public
+
+      - name: Stop Next.js example app
+        if: always() # Ensure this step runs even if previous steps fail
+        run: |
+          echo "Stopping Next.js app..."
+          # Find and kill the Next.js process
+          # pkill is simpler but might kill other node processes if not careful
+          # fuser is more specific to the port
+          fuser -k 3000/tcp || echo "Failed to stop app with fuser, or it was already stopped."
+          # Alternative: pkill -f "next dev"
+
+    outputs:
+      test_status: ${{ steps.integration_test.outcome }}
