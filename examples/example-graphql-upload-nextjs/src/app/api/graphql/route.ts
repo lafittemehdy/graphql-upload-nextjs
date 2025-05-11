@@ -104,7 +104,7 @@ interface Context {
 }
 
 const contextHandler = async (req: NextRequest, authenticated: string | boolean = false): Promise<Context> => {
-    const ip = req.ip || req.headers.get('x-forwarded-for') || ''
+    const ip = req.headers.get('x-forwarded-for') || ''
     if (authenticated) return { ip, req } 
     return { ip, req }
 }

@@ -1,5 +1,5 @@
 import { GraphQLScalarType, GraphQLError } from 'graphql'
-import { type NextRequest, NextResponse } from 'next/server.js'
+import { NextResponse } from 'next/server.js'
 import type { GraphQLResponse } from '@apollo/server'
 import { fileTypeFromBuffer } from 'file-type'
 import { isText } from 'istextorbinary'
@@ -163,11 +163,18 @@ interface ServerExecuteOperationParams {
     variables: Record<string, unknown>;
 }
 
+export interface MinimalRequest {
+    formData: () => Promise<FormData>;
+    headers: {
+        get: (name: string) => string | null;
+    };
+}
+
 /**
  * Processes a GraphQL multipart request with file uploads.
  */
 export async function uploadProcess<TContext extends Record<string, unknown>>(
-    request: NextRequest,
+    request: MinimalRequest,
     contextValueInput: TContext,
     server: {
         executeOperation: (
