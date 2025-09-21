@@ -7,7 +7,7 @@ This example project demonstrates how to integrate GraphQL file uploads into a t
 To get started with this example, clone the repository and navigate to the project directory:
 
 ```bash
-git clone https://github.com/hafaiedhmehdy/graphql-upload-nextjs.git
+git clone https://github.com/lafittemehdy/graphql-upload-nextjs.git
 cd graphql-upload-nextjs # Enter the project directory
 cd examples/example-graphql-upload-nextjs # Navigate to the example
 ```
@@ -42,17 +42,12 @@ To upload a file, select a file using the file input field, set the key to the v
 
 ## Note
 
-This example uses the `graphql-upload-nextjs` package to test and demonstrate its integration with a Next.js/Apollo Server GraphQL setup. The development of `graphql-upload-nextjs` itself is done in the parent folder "graphql-upload-nextjs". Please note: we import the packages through a relative path. If you want to use this Next.js example standalone, update the import from:
+This example imports `graphql-upload-nextjs` directly as a package. If you are developing the package locally, you can use `npm link` to test your changes in this example.
 
-```javascript
-import { GraphQLUpload, type File, uploadProcess } from '../../../../../../index'
-```
+1.  Navigate to the root directory of the `graphql-upload-nextjs` package and run `npm link`.
+2.  Navigate to this example's directory (`examples/example-graphql-upload-nextjs`) and run `npm link graphql-upload-nextjs`.
 
-to:
-
-```javascript
-import { GraphQLUpload, type File, uploadProcess } from 'example-graphql-upload-nextjs'
-```
+This will create a symbolic link from this project's `node_modules` to your local `graphql-upload-nextjs` package, allowing you to test your changes live.
 
 ## Contributing
 

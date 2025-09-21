@@ -49,8 +49,8 @@ export declare function uploadProcess<TContext extends Record<string, unknown>>(
     executeOperation: (params: ServerExecuteOperationParams, context: {
         contextValue: TContext;
     }) => Promise<GraphQLResponse<TContext>>;
-}, settings: {
-    allowedTypes: string[];
-    maxFileSize: number;
+}, settings?: {
+    allowedTypes?: string[];
+    maxFileSize?: number;
 }): Promise<NextResponse<any>>;
 export {};

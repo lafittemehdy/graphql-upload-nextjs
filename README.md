@@ -1,7 +1,5 @@
 # graphql-upload-nextjs
 
-[![Integration Test](https://github.com/lafittemehdy/graphql-upload-nextjs/actions/workflows/integration-test.yml/badge.svg)](https://github.com/lafittemehdy/graphql-upload-nextjs/actions/workflows/integration-test.yml)
-
 `graphql-upload-nextjs` is a robust package that enables seamless file uploads in a Next.js environment using GraphQL. This package is designed to integrate easily with Apollo Server, allowing you to handle file uploads in your GraphQL mutations with ease and efficiency.
 
 ## Features
@@ -71,63 +69,112 @@ const typeDefs = gql`
 
 const resolvers = {
     Mutation: {
-        // This is a simplified example for demonstration purposes only; do not use this code in a production environment.
-        uploadFile: async (_parent: void, { file }: { file: Promise<File> }, { ip }: Context) => {
-            try {
-                const { createReadStream, encoding, fileName, fileSize, mimeType } = await file
+        uploadFile: async (
+          _parent: undefined,
+          { file }: { file: Promise<File> },
+          _context: Context,
+        ): Promise<GraphQLFileResponse> => {
+          try {
+            const { createReadStream, encoding, fileName, fileSize, mimeType } =
+              await file;
+            const allowedTypes = ["image/jpeg", "image/png", "text/plain"];
+            const maxFileSize = 10 * 1024 * 1024; // 10MB
 
-                // Use a Promise to handle the asynchronous file saving operation.
-                return new Promise((resolve, reject) => {
-                    pipeline(
-                        createReadStream(),
-                        // This example stores the file in the 'public' directory for simplicity, you should NEVER do this.
-                        createWriteStream(`./public/${fileName}`),
-                        (error) => {
-                            if (error) {
-                                console.error('File upload pipeline error:', error)
-                                reject(new Error('Error during file upload.'))
-                            } else {
-                                console.log(`${ip} successfully uploaded ${fileName}`)
-                                // Resolve the promise with the file details for the GraphQL response.
-                                resolve({ encoding, fileName, fileSize, mimeType, uri: `http://localhost:3000/${fileName}` })
-                            }
-                        }
-                    )
-                })
-            } catch (error) {
-                // You should handle any errors that occur during file upload more gracefully.
-                console.error('Error handling file upload:', error)
-                throw new Error('Failed to handle file upload.')
+            if (!allowedTypes.includes(mimeType)) {
+              throw new Error(`File type ${mimeType} is not allowed.`);
             }
+
+            if (fileSize > maxFileSize) {
+              throw new Error(`File size exceeds the limit of 10MB.`);
+            }
+
+            return new Promise<GraphQLFileResponse>((resolve, reject) => {
+              pipeline(
+                createReadStream(),
+                // IMPORTANT: Storing files in 'public' is insecure for production. Use secure storage.
+                createWriteStream(`./public/${fileName}`),
+                (error) => {
+                  if (error) {
+                    reject(new Error("Error during file upload."));
+                  } else {
+                    resolve({
+                      encoding,
+                      fileName,
+                      fileSize,
+                      mimeType,
+                      uri: `http://localhost:3000/${fileName}`,
+                    });
+                  }
+                },
+              );
+            });
+          } catch (_error) {
+            throw new Error("Failed to handle file upload.");
+          }
         },
-        uploadFiles: async (_parent: void, { files }: { files: [Promise<File>] }, { ip }: Context) => {
-            try {
-                const results = await Promise.all(
-                    files.map(async (file) => {
-                        const { createReadStream, encoding, fileName, fileSize, mimeType } = await file;
-                        return new Promise((resolve, reject) => {
-                            pipeline(
-                                createReadStream(),
-                                createWriteStream(`./public/${fileName}`), // Store in 'public' for simplicity
-                                (error) => {
-                                    if (error) {
-                                        console.error('File upload pipeline error:', error);
-                                        reject(new Error('Error during file upload.'));
-                                    } else {
-                                        console.log(`${ip} successfully uploaded ${fileName}`);
-                                        resolve({ encoding, fileName, fileSize, mimeType, uri: `http://localhost:3000/${fileName}` });
-                                    }
-                                }
-                            );
-                        });
-                    })
-                );
-                return results;
-            } catch (error) {
-                console.error('Error handling multiple file uploads:', error);
-                throw new Error('Failed to handle multiple file uploads.');
+        uploadFiles: async (
+          _parent: undefined,
+          { files }: { files: Promise<File>[] },
+          _context: Context,
+        ): Promise<GraphQLFileResponse[]> => {
+          const resolvedFileObjects = await Promise.all(files);
+          const allowedTypes = ["image/jpeg", "image/png", "text/plain"];
+          const maxFileSize = 10 * 1024 * 1024; // 10MB
+
+          const processingPromises = resolvedFileObjects.map(async (fileObject) => {
+            if (
+              !fileObject ||
+              typeof fileObject.createReadStream !== "function" ||
+              !fileObject.fileName
+            ) {
+              throw new Error(
+                `Invalid file data encountered for one of the files.`,
+              );
             }
-        }
+
+            const { createReadStream, encoding, fileName, fileSize, mimeType } =
+              fileObject;
+
+            if (!allowedTypes.includes(mimeType)) {
+              throw new Error(
+                `File type ${mimeType} is not allowed for ${fileName}.`,
+              );
+            }
+
+            if (fileSize > maxFileSize) {
+              throw new Error(`File ${fileName} size exceeds the limit of 10MB.`);
+            }
+
+            return new Promise<GraphQLFileResponse>((resolve, reject) => {
+              const readStream = createReadStream();
+              if (typeof readStream.pipe !== "function") {
+                return reject(
+                  new Error(`Failed to get a readable stream for ${fileName}.`),
+                );
+              }
+              pipeline(
+                readStream,
+                // IMPORTANT: Insecure storage. Use secure solution in production.
+                createWriteStream(`./public/${fileName}`),
+                (error) => {
+                  if (error) {
+                    reject(new Error(`Error during upload of ${fileName}.`));
+                  } else {
+                    resolve({
+                      encoding,
+                      fileName,
+                      fileSize,
+                      mimeType,
+                      uri: `http://localhost:3000/${fileName}`,
+                    });
+                  }
+                },
+              );
+            });
+          });
+
+          return Promise.all(processingPromises);
+        },
     },
     Query: {
         default: async () => true
@@ -142,62 +189,60 @@ const resolvers = {
 Create the Apollo Server instance and set up the request handler:
 
 ```javascript
-// Where data and requests meet (and hopefully get along).
-const server = new ApolloServer({ resolvers, typeDefs })
+const server = new ApolloServer({ resolvers, typeDefs });
 
 interface Context {
-    ip: string        // IP address of the client.
-    req: NextRequest  // The Next.js request object.
+  ip: string;
+  req: NextRequest;
+  [key: string]: unknown;
 }
 
-// You'll usually want to authenticate users here, but for this example, we'll just get the IP address.
-// We centralize the context creation to avoid code duplication.
-const contextHandler = async (req: NextRequest, authenticated: string | boolean = false): Promise<Context> => {
-    const ip = req.ip || req.headers.get('x-forwarded-for') || ''
-    // Since we've already authenticated the user, we skip it here. See the requestHandler for more details.
-    if (authenticated) return { ip, req }
-    // Default context for normal operations.
-    return { ip, req }
+const contextHandler = async (
+  req: NextRequest,
+  authenticated: string | boolean = false,
+): Promise<Context> => {
+  const ip = req.headers.get("x-forwarded-for") || "";
+  if (authenticated) return { ip, req };
+  return { ip, req };
+};
+
+interface ServerExecuteOperationParams {
+  query: string;
+  variables: Record<string, unknown>;
 }
 
-// Apollo, we have liftoff! 🚀
-const handler = startServerAndCreateNextHandler<NextRequest, Context>(server, { context: contextHandler })
+interface ExpectedServerType<TContext extends Record<string, unknown>> {
+  executeOperation: (
+    params: ServerExecuteOperationParams,
+    context: { contextValue: TContext },
+  ) => Promise<GraphQLResponse<TContext>>;
+}
 
-// Handle upload requests separately from other GraphQL operations.
-// Note: This implementation is basic and needs enhancement for production use.
+const handler = startServerAndCreateNextHandler<NextRequest, Context>(server, {
+  context: contextHandler,
+});
+
 const requestHandler = async (request: NextRequest) => {
-    try {
-        // Handle file uploads specifically if the request is multipart/form-data.
-        if (request.headers.get('content-type')?.includes('multipart/form-data')) {
-            // Authenticate before uploading to prevent abuse.
-            // Pass the authenticated user to contextHandler to skip redundant authentication.
-            // 'User' is used as a placeholder for the authenticated user.
-            const context = await contextHandler(request, 'User')
-            return await uploadProcess(
-                request,
-                context,
-                server,
-                {
-                    // Allow only certain MIME types
-                    allowedTypes: ['image/jpeg', 'image/png', 'text/plain'],
-                    // Only allow image uploads up to 10MB.
-                    maxFileSize: 10 * 1024 * 1024
-                }
-            )
-        }
-        // Handle all other requests with the Apollo Server.
-        return handler(request)
-    } catch (error) {
-        // In a production environment, errors should be handled more gracefully.
-        console.error('Error in request handling:', error)
-        throw new Error('Failed to process request.')
+  try {
+    if (request.headers.get("content-type")?.includes("multipart/form-data")) {
+      // IMPORTANT: Authenticate before processing uploads. Placeholder 'User' used.
+      const context = await contextHandler(request, "User");
+      return await uploadProcess(
+        request,
+        context,
+        server as ExpectedServerType<Context>,
+      );
     }
-}
+    return handler(request);
+  } catch (_error) {
+    throw new Error("Failed to process request.");
+  }
+};
 
 // Export request handlers for GET, POST, and OPTIONS methods.
-export const GET = requestHandler
-export const POST = requestHandler
-export const OPTIONS = requestHandler
+export const GET = requestHandler;
+export const POST = requestHandler;
+export const OPTIONS = requestHandler;
 ```
 
 ### Executing the Mutations
@@ -300,21 +345,7 @@ function MyMultiUploader() {
 
 ## Example
 
-An example project demonstrating how to integrate GraphQL file uploads into a typical Next.js starter application is available in the repository under `graphql-upload-nextjs/examples/example-graphql-upload-nextjs/`. This example uses a relative path to the main package for live code testing and development.
-
-## Development Notes
-
-For development, the example uses a relative path to import the package. This setup allows you to test the code live:
-
-```javascript
-import { GraphQLUpload, type File, uploadProcess } from '../../../../../../index'
-```
-
-To use the example as a standalone, update the import to:
-
-```javascript
-import { GraphQLUpload, type File, uploadProcess } from 'graphql-upload-nextjs'
-```
+An example project demonstrating how to integrate GraphQL file uploads into a typical Next.js starter application is available in the repository under `graphql-upload-nextjs/examples/example-graphql-upload-nextjs/`.
 
 ## Contributing
 
@@ -330,4 +361,4 @@ I would like to express my sincere gratitude to [meabed](https://github.com/meab
 
 While this project deviates from the official specifications to prioritize compatibility with Next.js routes, I am committed to refining it further to align with those specifications as closely as possible. Notable enhancements include built-in security features, such as file type verification, as well as support and an example for GraphQL authentication.
 
-Finally, I would like to extend my heartfelt gratitude to my mom for her unwavering support, including hosting me and allowing me to dedicate my time to working on open-source software.
+Finally, I would like to extend my heartfelt gratitude to my mom for her unwavering support, which has allowed me to dedicate my time to working on open-source software.

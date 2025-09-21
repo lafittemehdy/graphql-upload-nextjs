@@ -117,7 +117,7 @@ function setValueAtPath(obj: Record<string, unknown>, path: string, value: unkno
 
 async function processUpload(
     file: FormDataFile,
-    allowedTypes: string[]
+    allowedTypes?: string[]
 ): Promise<Upload> {
     if (!file.name || typeof file.size !== 'number' || !file.type) {
         throw new Error('Invalid file properties: name, size, or type is missing or invalid.')
@@ -143,7 +143,7 @@ async function processUpload(
         }
     }
 
-    if (!allowedTypes.includes(mimeType)) {
+    if (allowedTypes && !allowedTypes.includes(mimeType)) {
         throw new Error(`File type ${mimeType} is not allowed. Allowed types: ${allowedTypes.join(', ')}`)
     }
 
@@ -182,7 +182,7 @@ export async function uploadProcess<TContext extends Record<string, unknown>>(
             context: { contextValue: TContext }
         ) => Promise<GraphQLResponse<TContext>>
     },
-    settings: { allowedTypes: string[], maxFileSize: number }
+    settings?: { allowedTypes?: string[], maxFileSize?: number }
 ): Promise<NextResponse<any>> {
     try {
         const formData: FormData = await request.formData()
@@ -212,13 +212,13 @@ export async function uploadProcess<TContext extends Record<string, unknown>>(
                 continue;
             }
 
-            if (file.size > settings.maxFileSize) {
+            if (settings?.maxFileSize && file.size > settings.maxFileSize) {
                 return NextResponse.json({ errors: [{ message: `File ${file.name} size is too large. Maximum allowed size is ${settings.maxFileSize / (1024 * 1024)}MB.` }] }, { status: 413 });
             }
 
             const variablePaths = map[fileKeyInMap];
 
-            const filePromise = processUpload(file, settings.allowedTypes)
+            const filePromise = processUpload(file, settings?.allowedTypes)
                 .then(uploadInstance => {
                     variablePaths.forEach(path => {
                         setValueAtPath(operations, path, uploadInstance);

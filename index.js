@@ -111,7 +111,7 @@ async function processUpload(file, allowedTypes) {
             // isText check failed, proceed with original mimeType
         }
     }
-    if (!allowedTypes.includes(mimeType)) {
+    if (allowedTypes && !allowedTypes.includes(mimeType)) {
         throw new Error(`File type ${mimeType} is not allowed. Allowed types: ${allowedTypes.join(', ')}`);
     }
     const upload = new Upload();
@@ -150,11 +150,11 @@ export async function uploadProcess(request, contextValueInput, server, settings
                 });
                 continue;
             }
-            if (file.size > settings.maxFileSize) {
+            if (settings?.maxFileSize && file.size > settings.maxFileSize) {
                 return NextResponse.json({ errors: [{ message: `File ${file.name} size is too large. Maximum allowed size is ${settings.maxFileSize / (1024 * 1024)}MB.` }] }, { status: 413 });
             }
             const variablePaths = map[fileKeyInMap];
-            const filePromise = processUpload(file, settings.allowedTypes)
+            const filePromise = processUpload(file, settings?.allowedTypes)
                 .then(uploadInstance => {
                 variablePaths.forEach(path => {
                     setValueAtPath(operations, path, uploadInstance);

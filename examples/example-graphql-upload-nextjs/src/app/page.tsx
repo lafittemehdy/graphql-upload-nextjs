@@ -6,7 +6,8 @@ export default function Home() {
           Example GraphQL Upload Next.js
         </h1>
         <p className="mb-8 text-2xl leading-relaxed">
-          Seamlessly enable GraphQL multipart requests for file uploads in your Apollo Server Next.js integration.
+          Seamlessly enable GraphQL multipart requests for file uploads in your
+          Apollo Server Next.js integration.
         </p>
         <a
           className="block border border-white font-bold hover:bg-white hover:text-black px-8 py-4 text-center text-3xl transition-colors"
@@ -16,5 +17,5 @@ export default function Home() {
         </a>
       </div>
     </main>
-  )
+  );
 }
