@@ -1,61 +1,76 @@
 # graphql-upload-nextjs
 
-`graphql-upload-nextjs` is a robust package that enables seamless file uploads in a Next.js environment using GraphQL. This package is designed to integrate easily with Apollo Server, allowing you to handle file uploads in your GraphQL mutations with ease and efficiency.
+[![npm version](https://img.shields.io/npm/v/graphql-upload-nextjs.svg)](https://www.npmjs.com/package/graphql-upload-nextjs)
+[![CI](https://github.com/lafittemehdy/graphql-upload-nextjs/actions/workflows/ci.yml/badge.svg)](https://github.com/lafittemehdy/graphql-upload-nextjs/actions/workflows/ci.yml)
+[![license](https://img.shields.io/npm/l/graphql-upload-nextjs.svg)](https://github.com/lafittemehdy/graphql-upload-nextjs/blob/master/LICENSE)
+[![GraphQL multipart request spec](https://img.shields.io/badge/spec-graphql--multipart--request-blue)](https://github.com/jaydenseric/graphql-multipart-request-spec)
+[![Node.js](https://img.shields.io/badge/node-%3E%3D22-brightgreen)](https://nodejs.org)
+[![TypeScript](https://img.shields.io/badge/TypeScript-5-blue)](https://www.typescriptlang.org)
+
+A [GraphQL multipart request spec](https://github.com/jaydenseric/graphql-multipart-request-spec) implementation for [Next.js](https://nextjs.org) App Router with [Apollo Server](https://www.apollographql.com/docs/apollo-server). Enables file uploads via GraphQL mutations using the `Upload` scalar, with built-in MIME type verification via magic bytes.
 
 ## Features
 
-- Supports file uploads via GraphQL in a Next.js environment.
-- Utilizes Apollo Server for handling GraphQL operations.
-- Provides utilities for processing and validating file uploads.
-- Handles various file types with customizable MIME type and size restrictions.
-- Offers a clear and structured approach for integrating file uploads into your GraphQL schema.
+- Implements the [GraphQL multipart request spec](https://github.com/jaydenseric/graphql-multipart-request-spec).
+- Designed for Next.js App Router route handlers.
+- Supports single file uploads, multiple file uploads, and operation batching.
+- File deduplication (one file mapped to multiple operation paths).
+- MIME type verified via magic bytes using [file-type](https://npm.im/file-type), not trusting client headers.
+- Configurable `allowedTypes`, `maxFileSize`, and `maxFiles`.
+- Only reads 4KB for MIME detection — streams the rest directly from `Blob`.
+- Spec-compatible property names: `filename`, `mimetype`, `encoding`, `createReadStream`.
 
 ## Installation
 
-To install the package, use one of the following commands:
-
 ```bash
 npm install graphql-upload-nextjs
-# or
-yarn add graphql-upload-nextjs
-# or
-pnpm add graphql-upload-nextjs
 ```
+
+## Migrating from graphql-upload
+
+[graphql-upload](https://github.com/jaydenseric/graphql-upload) uses Express/Koa middleware that is incompatible with Next.js App Router route handlers. This package provides the same `Upload` scalar and file object interface for the Next.js environment.
+
+Property names match the original: `filename`, `mimetype`, `encoding`, `createReadStream`. An additional `fileSize` property is also available.
+
+**Before (graphql-upload with Express):**
+```typescript
+import graphqlUploadExpress from 'graphql-upload/graphqlUploadExpress.mjs'
+app.use(graphqlUploadExpress())
+```
+
+**After (graphql-upload-nextjs with App Router):**
+```typescript
+import { GraphQLUpload, uploadProcess } from 'graphql-upload-nextjs'
+
+// In your route handler:
+if (request.headers.get("content-type")?.includes("multipart/form-data")) {
+    return await uploadProcess(request, context, server);
+}
+```
+
+Resolver code stays the same — `filename`, `mimetype`, `encoding`, and `createReadStream` work identically.
 
 ## Usage
 
-### Importing the Package
+### Schema and Resolvers
 
-Import the necessary components from the package:
-
-```javascript
-import { GraphQLUpload, type File, uploadProcess } from 'graphql-upload-nextjs'
-
+```typescript
+import path from 'node:path'
+import { createWriteStream } from 'node:fs'
+import { pipeline } from 'node:stream'
+import { gql } from '@apollo/client' // Optional: syntax highlighting only.
 import { ApolloServer } from '@apollo/server'
-import { NextRequest } from 'next/server'
-import { createWriteStream } from 'fs'
-import { pipeline } from 'stream'
 import { startServerAndCreateNextHandler } from '@as-integrations/next'
+import { type File, GraphQLUpload, uploadProcess } from 'graphql-upload-nextjs'
+import type { NextRequest } from 'next/server.js'
 
-// Optional: Use the gql module from Apollo Client for syntax highlighting. 
-// This package is already installed for the client side.
-import { gql } from '@apollo/client'
-```
-
-### Defining the GraphQL Schema and Resolvers
-
-Define your GraphQL schema and resolvers:
-
-```javascript
-// For this example, we define the GraphQL schema and resolvers below.
 const typeDefs = gql`
-    # Custom scalar type for handling file uploads.
     scalar Upload
     type File {
         encoding: String!
-        fileName: String!
+        filename: String!
         fileSize: Int!
-        mimeType: String!
+        mimetype: String!
         uri: String!
     }
     type Query {
@@ -67,298 +82,230 @@ const typeDefs = gql`
     }
 `
 
+interface FileResponse {
+    encoding: string;
+    filename: string;
+    fileSize: number;
+    mimetype: string;
+    uri: string;
+}
+
 const resolvers = {
     Mutation: {
         uploadFile: async (
-          _parent: undefined,
-          { file }: { file: Promise<File> },
-          _context: Context,
-        ): Promise<GraphQLFileResponse> => {
-          try {
-            const { createReadStream, encoding, fileName, fileSize, mimeType } =
-              await file;
-            const allowedTypes = ["image/jpeg", "image/png", "text/plain"];
-            const maxFileSize = 10 * 1024 * 1024; // 10MB
-
-            if (!allowedTypes.includes(mimeType)) {
-              throw new Error(`File type ${mimeType} is not allowed.`);
-            }
-
-            if (fileSize > maxFileSize) {
-              throw new Error(`File size exceeds the limit of 10MB.`);
-            }
-
-            return new Promise<GraphQLFileResponse>((resolve, reject) => {
-              pipeline(
-                createReadStream(),
-                // IMPORTANT: Storing files in 'public' is insecure for production. Use secure storage.
-                createWriteStream(`./public/${fileName}`),
-                (error) => {
-                  if (error) {
-                    reject(new Error("Error during file upload."));
-                  } else {
-                    resolve({
-                      encoding,
-                      fileName,
-                      fileSize,
-                      mimeType,
-                      uri: `http://localhost:3000/${fileName}`,
-                    });
-                  }
-                },
-              );
+            _parent: undefined,
+            { file }: { file: Promise<File> },
+        ): Promise<FileResponse> => {
+            const { createReadStream, encoding, filename, fileSize, mimetype } = await file;
+            const safeName = path.basename(filename);
+            return new Promise((resolve, reject) => {
+                pipeline(
+                    createReadStream(),
+                    createWriteStream(`./uploads/${safeName}`),
+                    (error) => {
+                        if (error) reject(new Error("Error during file upload."));
+                        else resolve({ encoding, filename: safeName, fileSize, mimetype, uri: `/${safeName}` });
+                    },
+                );
             });
-          } catch (_error) {
-            throw new Error("Failed to handle file upload.");
-          }
         },
         uploadFiles: async (
-          _parent: undefined,
-          { files }: { files: Promise<File>[] },
-          _context: Context,
-        ): Promise<GraphQLFileResponse[]> => {
-          const resolvedFileObjects = await Promise.all(files);
-          const allowedTypes = ["image/jpeg", "image/png", "text/plain"];
-          const maxFileSize = 10 * 1024 * 1024; // 10MB
-
-          const processingPromises = resolvedFileObjects.map(async (fileObject) => {
-            if (
-              !fileObject ||
-              typeof fileObject.createReadStream !== "function" ||
-              !fileObject.fileName
-            ) {
-              throw new Error(
-                `Invalid file data encountered for one of the files.`,
-              );
-            }
-
-            const { createReadStream, encoding, fileName, fileSize, mimeType } =
-              fileObject;
-
-            if (!allowedTypes.includes(mimeType)) {
-              throw new Error(
-                `File type ${mimeType} is not allowed for ${fileName}.`,
-              );
-            }
-
-            if (fileSize > maxFileSize) {
-              throw new Error(`File ${fileName} size exceeds the limit of 10MB.`);
-            }
-
-            return new Promise<GraphQLFileResponse>((resolve, reject) => {
-              const readStream = createReadStream();
-              if (typeof readStream.pipe !== "function") {
-                return reject(
-                  new Error(`Failed to get a readable stream for ${fileName}.`),
-                );
-              }
-              pipeline(
-                readStream,
-                // IMPORTANT: Insecure storage. Use secure solution in production.
-                createWriteStream(`./public/${fileName}`),
-                (error) => {
-                  if (error) {
-                    reject(new Error(`Error during upload of ${fileName}.`));
-                  } else {
-                    resolve({
-                      encoding,
-                      fileName,
-                      fileSize,
-                      mimeType,
-                      uri: `http://localhost:3000/${fileName}`,
-                    });
-                  }
-                },
-              );
-            });
-          });
-
-          return Promise.all(processingPromises);
+            _parent: undefined,
+            { files }: { files: Promise<File>[] },
+        ): Promise<FileResponse[]> => {
+            const resolvedFiles = await Promise.all(files);
+            return Promise.all(resolvedFiles.map(async ({ createReadStream, encoding, filename, fileSize, mimetype }) => {
+                const safeName = path.basename(filename);
+                return new Promise<FileResponse>((resolve, reject) => {
+                    pipeline(
+                        createReadStream(),
+                        createWriteStream(`./uploads/${safeName}`),
+                        (error) => {
+                            if (error) reject(new Error(`Error during upload of ${safeName}.`));
+                            else resolve({ encoding, filename: safeName, fileSize, mimetype, uri: `/${safeName}` });
+                        },
+                    );
+                });
+            }));
         },
     },
-    Query: {
-        default: async () => true
-    },
-    // Add the custom scalar type for file uploads.
-    Upload: GraphQLUpload
+    Query: { default: async () => true },
+    Upload: GraphQLUpload,
 }
 ```
 
-### Creating the Apollo Server
+> **Security:** Always sanitize filenames with `path.basename()` to prevent path traversal attacks. Never write uploaded files to publicly accessible directories in production.
 
-Create the Apollo Server instance and set up the request handler:
+### Route Handler
 
-```javascript
+```typescript
 const server = new ApolloServer({ resolvers, typeDefs });
 
-interface Context {
-  ip: string;
-  req: NextRequest;
-  [key: string]: unknown;
-}
-
-const contextHandler = async (
-  req: NextRequest,
-  authenticated: string | boolean = false,
-): Promise<Context> => {
-  const ip = req.headers.get("x-forwarded-for") || "";
-  if (authenticated) return { ip, req };
-  return { ip, req };
-};
-
-interface ServerExecuteOperationParams {
-  query: string;
-  variables: Record<string, unknown>;
-}
-
-interface ExpectedServerType<TContext extends Record<string, unknown>> {
-  executeOperation: (
-    params: ServerExecuteOperationParams,
-    context: { contextValue: TContext },
-  ) => Promise<GraphQLResponse<TContext>>;
-}
-
-const handler = startServerAndCreateNextHandler<NextRequest, Context>(server, {
-  context: contextHandler,
+const handler = startServerAndCreateNextHandler<NextRequest>(server, {
+    context: async (req: NextRequest) => ({
+        ip: req.headers.get("x-forwarded-for") || "",
+        req,
+    }),
 });
 
 const requestHandler = async (request: NextRequest) => {
-  try {
     if (request.headers.get("content-type")?.includes("multipart/form-data")) {
-      // IMPORTANT: Authenticate before processing uploads. Placeholder 'User' used.
-      const context = await contextHandler(request, "User");
-      return await uploadProcess(
-        request,
-        context,
-        server as ExpectedServerType<Context>,
-      );
+        const context = { ip: request.headers.get("x-forwarded-for") || "", req: request };
+        return await uploadProcess(request, context, server);
     }
     return handler(request);
-  } catch (_error) {
-    throw new Error("Failed to process request.");
-  }
 };
 
-// Export request handlers for GET, POST, and OPTIONS methods.
 export const GET = requestHandler;
 export const POST = requestHandler;
 export const OPTIONS = requestHandler;
 ```
 
-### Executing the Mutations
+### Configuration
 
-When sending requests to your GraphQL server, you'll need to structure your mutation and variables correctly. This package adheres to the [GraphQL multipart request specification](https://github.com/jaydenseric/graphql-multipart-request-spec) for file uploads.
-
-**Single File Upload (`uploadFile` mutation):**
-
-*GraphQL Operation:*
-```graphql
-mutation UploadFile($file: Upload!) {
-  uploadFile(file: $file) {
-    fileName
-    mimeType
-    encoding
-    uri
-    fileSize
-  }
-}
+```typescript
+await uploadProcess(request, context, server, {
+    allowedTypes: ["image/jpeg", "image/png", "text/plain"],
+    maxFiles: 10,
+    maxFileSize: 10 * 1024 * 1024, // 10MB
+});
 ```
 
-*GraphQL Variables:*
-The key in the variables object (`"file"`) must match the argument name in your GraphQL mutation (`$file`).
-When using a GraphQL client library (e.g., Apollo Client, urql, Relay):
-*   You'll typically pass the browser's `File` object (e.g., from an `<input type="file">`) directly as the value for the `file` variable.
-*   The client library automatically constructs the multipart/form-data request according to the GraphQL multipart request specification.
+| Option | Type | Default | Description |
+|---|---|---|---|
+| `allowedTypes` | `string[]` | `undefined` | Restrict MIME types. Verified via magic bytes. |
+| `maxFiles` | `number` | `undefined` | Max files per request. Returns 413 if exceeded. |
+| `maxFileSize` | `number` | `undefined` | Max file size in bytes. Returns 413 if exceeded. |
 
-The `{"file": null}` structure illustrates how the `operations` part of the multipart request is formed, where `null` acts as a placeholder for the actual file content that is sent in a separate part of the request. You generally don't need to construct this manually when using a client library.
+### Client Usage
 
-*Example with a client library (conceptual):*
-```javascript
-// In your frontend code
-import { gql, useMutation } from '@apollo/client'; // Or your client of choice
+When using a GraphQL client library ([apollo-upload-client](https://npm.im/apollo-upload-client), [urql](https://npm.im/@urql/exchange-multipart-fetch), [extract-files](https://npm.im/extract-files)), file uploads are constructed automatically per the spec.
 
-const UPLOAD_FILE_MUTATION = gql`
+```typescript
+import { gql, useMutation } from '@apollo/client';
+
+const UPLOAD = gql`
   mutation UploadFile($file: Upload!) {
-    uploadFile(file: $file) { fileName }
+    uploadFile(file: $file) { filename mimetype fileSize }
   }
 `;
 
-function MyUploader() {
-  const [uploadFileMutation] = useMutation(UPLOAD_FILE_MUTATION);
-
-  const handleChange = (event) => {
-    const file = event.target.files[0];
-    if (file) {
-      uploadFileMutation({ variables: { file } });
-    }
-  };
-
-  return <input type="file" onChange={handleChange} />;
+function Uploader() {
+  const [upload] = useMutation(UPLOAD);
+  return <input type="file" onChange={(e) => {
+    const file = e.target.files?.[0];
+    if (file) upload({ variables: { file } });
+  }} />;
 }
 ```
 
-**Multiple File Upload (`uploadFiles` mutation):**
+## API Reference
 
-*GraphQL Operation:*
-```graphql
-mutation UploadFiles($files: [Upload!]!) {
-  uploadFiles(files: $files) {
-    fileName
-    mimeType
-    encoding
-    uri
-    fileSize
-  }
-}
-```
+### Core Exports
 
-*GraphQL Variables:*
-Similarly, the key `"files"` must match the argument name (`$files`).
-When using a GraphQL client library:
-*   You'll pass an array of `File` objects as the value for the `files` variable.
-*   The client library handles the multipart request construction.
+| Export | Type | Description |
+|---|---|---|
+| `GraphQLUpload` | `GraphQLScalarType` | The `Upload` scalar for your GraphQL schema. |
+| `uploadProcess` | `function` | Processes a multipart request with file uploads. |
+| `Upload` | `class` | Holds a promise that resolves with file upload details. |
 
-The `{"files": [null, null]}` structure illustrates the `operations` part, with `null` placeholders for file content sent separately.
+### File Object
 
-*Example with a client library (conceptual):*
-```javascript
-// In your frontend code
-const UPLOAD_FILES_MUTATION = gql`
-  mutation UploadFiles($files: [Upload!]!) {
-    uploadFiles(files: $files) { fileName }
-  }
-`;
+The resolved file object passed to resolvers:
 
-function MyMultiUploader() {
-  const [uploadFilesMutation] = useMutation(UPLOAD_FILES_MUTATION);
+| Property | Type | Description |
+|---|---|---|
+| `createReadStream` | `() => ReadableStream` | Creates a Node.js readable stream of the file contents. Replayable. |
+| `encoding` | `string` | Transfer encoding (always `'binary'` with FormData API). |
+| `filename` | `string` | Original file name from the client. |
+| `fileSize` | `number` | File size in bytes. |
+| `mimetype` | `string` | MIME type verified via magic bytes. |
 
-  const handleChange = (event) => {
-    const files = Array.from(event.target.files);
-    if (files.length > 0) {
-      uploadFilesMutation({ variables: { files } });
-    }
-  };
+### Utility Exports
 
-  return <input type="file" multiple onChange={handleChange} />;
-}
-```
+| Export | Type | Description |
+|---|---|---|
+| `bufferToStream` | `(buffer: Buffer) => ReadableStream` | Converts a Buffer to a Node.js readable stream. |
+| `parseOperationsJSON` | `(input: string) => object \| object[]` | Parses the operations field (object or array for batching). |
+| `sanitizeAndValidateJSON` | `(input: string) => object` | Parses JSON and validates it's a non-null, non-array object. |
+| `setValueAtPath` | `(obj, path, value) => void` | Sets a value at a dot-notation path in a nested object. |
+| `streamToBuffer` | `(stream: ReadableStream) => Promise<Buffer>` | Collects a readable stream into a Buffer. |
+| `validateMap` | `(map: object) => string \| null` | Validates map entries are arrays of string paths. Returns error or null. |
+
+### TypeScript Interfaces
+
+| Export | Description |
+|---|---|
+| `File` | Resolved file object with `filename`, `mimetype`, `encoding`, `fileSize`, `createReadStream`. |
+| `FileStream` | FormData file entry with a `stream()` method. |
+| `FormDataFile` | Raw file entry from multipart FormData. |
+| `MinimalRequest` | Request interface compatible with Next.js and Web API. |
+
+## Spec Compliance
+
+Implements the [GraphQL multipart request specification](https://github.com/jaydenseric/graphql-multipart-request-spec) by [jaydenseric](https://github.com/jaydenseric).
+
+The spec defines a [multipart form field structure](https://github.com/jaydenseric/graphql-multipart-request-spec#multipart-form-field-structure) with three ordered fields (`operations`, `map`, file fields) and enables nesting files anywhere within operations, operation batching, file deduplication, and file upload streams in resolvers.
+
+### Supported Capabilities
+
+| Spec Capability | Status | Details |
+|---|---|---|
+| `operations` field ([JSON-encoded GraphQL operation](https://github.com/jaydenseric/graphql-multipart-request-spec#multipart-form-field-structure)) | Supported | Parsed and validated as object or array. |
+| `map` field ([file-to-path mapping](https://github.com/jaydenseric/graphql-multipart-request-spec#multipart-form-field-structure)) | Supported | Validated: each entry must be an array of string paths. |
+| [Single file upload](https://github.com/jaydenseric/graphql-multipart-request-spec#single-file) | Supported | File mapped via `"variables.file"` path. |
+| [File list upload](https://github.com/jaydenseric/graphql-multipart-request-spec#file-list) | Supported | Files mapped via `"variables.files.0"`, `"variables.files.1"`, etc. |
+| [Batching](https://github.com/jaydenseric/graphql-multipart-request-spec#batching) | Supported | Operations as array, paths prefixed with operation index (`"0.variables.file"`). |
+| File deduplication | Supported | One file field mapped to multiple operation paths. |
+| [`object-path`](https://npm.im/object-path) dot-notation | Supported | Handles nested objects and array indices. |
+| File upload streams in resolvers | Supported | `createReadStream()` returns a Node.js readable stream. |
+| Missing file → rejected promise | Supported | Upload promise rejected with `"File missing in the request."` |
+| `maxFiles` / `maxFileSize` limits | Supported | Returns HTTP 413 when exceeded. |
+
+### Additions Beyond the Spec
+
+| Feature | Description |
+|---|---|
+| MIME magic byte verification | Real file type detected via [file-type](https://npm.im/file-type), not trusting client-provided `Content-Type`. |
+| `allowedTypes` filtering | Server-side restriction of accepted MIME types. |
+| `fileSize` property | File size in bytes available on the resolved file object. |
+
+### Limitations
+
+These are inherent trade-offs of using the Web `FormData` API for Next.js App Router compatibility. They do not affect normal spec usage.
+
+| Limitation | Reason |
+|---|---|
+| **No field ordering validation** | The [spec requires](https://github.com/jaydenseric/graphql-multipart-request-spec#multipart-form-field-structure) `operations` → `map` → files ordering. The Web `FormData` API retrieves fields by name (`formData.get('operations')`), not by position, so ordering cannot be validated. In practice, all major client libraries ([apollo-upload-client](https://npm.im/apollo-upload-client), [extract-files](https://npm.im/extract-files)) send fields in the correct order. |
+| **No `maxFieldSize`** | The original [graphql-upload](https://github.com/jaydenseric/graphql-upload) limits non-file field sizes via `busboy`. Next.js parses the full request body into `FormData` before our code runs, so field size limiting is not possible at this layer. |
+| **`encoding` is always `'binary'`** | `FormData` does not expose the transfer encoding of file parts. The original `graphql-upload` reads this from `busboy`'s stream events. In practice, transfer encoding is rarely used by resolvers. |
+| **No mid-stream abort** | The original uses `fs-capacitor` to buffer uploads to disk, allowing resolvers to abort an in-progress upload. With `FormData`, the entire request body is already parsed by the runtime. However, resolvers can still choose not to call `createReadStream()` to skip processing. |
+| **`Blob.stream()` instead of `busboy` streaming** | Next.js route handlers receive a `Request` object (Web API), not a Node.js `IncomingMessage`. There is no access to the raw request stream. `Blob.stream()` provides a replayable readable stream per file. |
 
 ## Example
 
-An example project demonstrating how to integrate GraphQL file uploads into a typical Next.js starter application is available in the repository under `graphql-upload-nextjs/examples/example-graphql-upload-nextjs/`.
+A full example project is available at [`examples/example-graphql-upload-nextjs/`](examples/example-graphql-upload-nextjs/).
 
 ## Contributing
 
-Contributions are welcome! If you find any issues or have suggestions for improvements, please open an issue or submit a pull request.
+Contributions are welcome! To get started:
+
+```bash
+git clone https://github.com/lafittemehdy/graphql-upload-nextjs.git
+cd graphql-upload-nextjs
+npm install
+npm run build
+npm test
+```
+
+CI runs automatically on push and pull requests via GitHub Actions (build + test on Node.js 22/24, example build + lint).
 
 ## License
 
-This project is licensed under the MIT License. See the [LICENSE](https://github.com/lafittemehdy/graphql-upload-nextjs/blob/master/LICENSE) file for more information.
+MIT. See [LICENSE](https://github.com/lafittemehdy/graphql-upload-nextjs/blob/master/LICENSE).
 
 ## Acknowledgements
 
-I would like to express my sincere gratitude to [meabed](https://github.com/meabed) for their excellent work on [graphql-upload-ts](https://github.com/meabed/graphql-upload-ts), which served as a valuable reference and inspiration for this project. I am also grateful to [jaydenseric](https://github.com/jaydenseric) for developing the original specifications for [graphql-upload](https://github.com/jaydenseric/graphql-upload).
+Sincere gratitude to [jaydenseric](https://github.com/jaydenseric) for the [GraphQL multipart request specification](https://github.com/jaydenseric/graphql-multipart-request-spec) and [graphql-upload](https://github.com/jaydenseric/graphql-upload), and to [meabed](https://github.com/meabed) for [graphql-upload-ts](https://github.com/meabed/graphql-upload-ts) which served as a valuable reference.
 
-While this project deviates from the official specifications to prioritize compatibility with Next.js routes, I am committed to refining it further to align with those specifications as closely as possible. Notable enhancements include built-in security features, such as file type verification, as well as support and an example for GraphQL authentication.
-
-Finally, I would like to extend my heartfelt gratitude to my mom for her unwavering support, which has allowed me to dedicate my time to working on open-source software.
+Finally, heartfelt gratitude to my mom for her unwavering support, which has allowed me to dedicate my time to working on open-source software.

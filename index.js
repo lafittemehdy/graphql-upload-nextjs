@@ -1,7 +1,8 @@
-import { GraphQLScalarType, GraphQLError } from 'graphql';
-import { NextResponse } from 'next/server.js';
 import { fileTypeFromBuffer } from 'file-type';
+import { GraphQLError, GraphQLScalarType } from 'graphql';
 import { isText } from 'istextorbinary';
+import { NextResponse } from 'next/server.js';
+import { Readable } from 'stream';
 /**
  * Represents an instance of a file upload.
  * Holds a promise that resolves with the file details once processed.
@@ -22,22 +23,150 @@ export class Upload {
         this.promise.catch(() => { });
     }
 }
+/** Custom GraphQL scalar type for handling file uploads. */
 export const GraphQLUpload = new GraphQLScalarType({
     description: 'The Upload scalar type represents a file upload.',
     name: 'Upload',
-    parseLiteral(node) { throw new GraphQLError('Upload literal unsupported.', { nodes: node }); },
-    parseValue(value) { return value instanceof Upload ? value.promise : new GraphQLError('Upload value invalid.'); },
-    serialize() { throw new GraphQLError('Upload serialization unsupported.'); }
+    parseLiteral(node) {
+        throw new GraphQLError('Upload literal unsupported.', { nodes: node });
+    },
+    parseValue(value) {
+        if (value instanceof Upload)
+            return value.promise;
+        throw new GraphQLError('Upload value invalid.');
+    },
+    serialize() {
+        throw new GraphQLError('Upload serialization unsupported.');
+    },
 });
+/** Converts a Buffer into a Node.js readable stream. */
+export function bufferToStream(buffer) {
+    const stream = new Readable();
+    stream.push(buffer);
+    stream.push(null);
+    return stream;
+}
+/** Collects a GraphQL response into a serializable result object. */
+async function collectResponse(response) {
+    if (response.body.kind === 'single') {
+        return response.body.singleResult;
+    }
+    if (response.body.kind === 'incremental') {
+        const { initialResult, subsequentResults } = response.body;
+        const collected = [];
+        for await (const result of subsequentResults) {
+            collected.push(result);
+        }
+        return { initialResult, subsequentResults: collected };
+    }
+    return { errors: [{ message: 'Unexpected server response format' }] };
+}
+/** Extracts File entries from multipart FormData. */
 async function extractFiles(formData) {
     const files = {};
-    for (const [key, value] of Array.from(formData.entries())) {
+    for (const [key, value] of formData.entries()) {
         if (value instanceof globalThis.File) {
             files[key] = value;
         }
     }
     return files;
 }
+/** Parses JSON for the operations field. Accepts objects or arrays (for batching per spec). */
+export function parseOperationsJSON(input) {
+    let result;
+    try {
+        result = JSON.parse(input);
+    }
+    catch {
+        throw new Error('Invalid JSON in the operations multipart field.');
+    }
+    if (typeof result !== 'object' || result === null) {
+        throw new Error('Invalid type for the operations multipart field.');
+    }
+    return result;
+}
+/**
+ * Processes a file from FormData, detects its MIME type via magic bytes,
+ * and returns a resolved Upload instance with streaming file access.
+ */
+async function processUpload(file, allowedTypes) {
+    if (!file.name || typeof file.size !== 'number' || !file.type) {
+        throw new Error('Invalid file properties: name, size, or type is missing or invalid.');
+    }
+    const blob = file;
+    // Only read the first 4100 bytes for MIME type detection via magic bytes.
+    // This avoids buffering the entire file into memory.
+    const DETECTION_BYTES = 4100;
+    const headerBuffer = Buffer.from(await blob.slice(0, DETECTION_BYTES).arrayBuffer());
+    const fileTypeInfo = await fileTypeFromBuffer(new Uint8Array(headerBuffer.buffer, headerBuffer.byteOffset, headerBuffer.byteLength));
+    let mimetype = file.type;
+    if (fileTypeInfo) {
+        mimetype = fileTypeInfo.mime;
+    }
+    else {
+        try {
+            if (await isText(file.name, headerBuffer)) {
+                mimetype = 'text/plain';
+            }
+        }
+        catch {
+            // Fallback: isText detection failed, proceeding with original mimetype from FormData.
+        }
+    }
+    if (allowedTypes && !allowedTypes.includes(mimetype)) {
+        throw new Error(`File type ${mimetype} is not allowed. Allowed types: ${allowedTypes.join(', ')}`);
+    }
+    const upload = new Upload();
+    upload.resolve({
+        createReadStream: () => Readable.fromWeb(blob.stream()),
+        encoding: 'binary',
+        fileSize: file.size,
+        filename: file.name,
+        mimetype,
+    });
+    return upload;
+}
+/** Parses and validates a JSON string, ensuring it resolves to a non-null object (rejects arrays). */
+export function sanitizeAndValidateJSON(input) {
+    let result;
+    try {
+        result = JSON.parse(input);
+    }
+    catch (error) {
+        throw new Error(`Invalid JSON input: ${error.message}`);
+    }
+    if (typeof result !== 'object' || result === null || Array.isArray(result)) {
+        throw new Error('Invalid JSON structure: expected a non-null object.');
+    }
+    return result;
+}
+/** Dangerous property names that could lead to prototype pollution. */
+const BLOCKED_KEYS = new Set(['__proto__', 'constructor', 'prototype']);
+/** Sets a value at a dot-notation path in a nested object, creating intermediate containers as needed. */
+export function setValueAtPath(obj, path, value) {
+    const keys = path.split('.');
+    let current = obj;
+    for (let i = 0; i < keys.length - 1; i++) {
+        const key = keys[i];
+        if (BLOCKED_KEYS.has(key)) {
+            throw new Error(`Invalid path segment: '${key}' is not allowed.`);
+        }
+        const nextKeyIsArrayIndex = /^\d+$/.test(keys[i + 1]);
+        if (!current[key] ||
+            typeof current[key] !== 'object' ||
+            (nextKeyIsArrayIndex && !Array.isArray(current[key])) ||
+            (!nextKeyIsArrayIndex && Array.isArray(current[key]))) {
+            current[key] = nextKeyIsArrayIndex ? [] : {};
+        }
+        current = current[key];
+    }
+    const finalKey = keys[keys.length - 1];
+    if (BLOCKED_KEYS.has(finalKey)) {
+        throw new Error(`Invalid path segment: '${finalKey}' is not allowed.`);
+    }
+    current[finalKey] = value;
+}
+/** Converts a Node.js readable stream into a Buffer by collecting all chunks. */
 export async function streamToBuffer(stream) {
     const chunks = [];
     for await (const chunk of stream) {
@@ -53,145 +182,122 @@ export async function streamToBuffer(stream) {
     }
     return Buffer.concat(chunks);
 }
-export function bufferToStream(buffer) {
-    const { Readable } = require('stream');
-    const stream = new Readable();
-    stream.push(buffer);
-    stream.push(null);
-    return stream;
-}
-export function sanitizeAndValidateJSON(input) {
-    try {
-        const result = JSON.parse(input);
-        if (typeof result !== 'object' || result === null) {
-            throw new Error('Invalid JSON structure: not an object.');
+/** Validates that each map entry is an array of string paths. */
+export function validateMap(map) {
+    for (const [key, paths] of Object.entries(map)) {
+        if (!Array.isArray(paths)) {
+            return `Invalid type for map entry '${key}': expected an array of paths.`;
         }
-        return result;
-    }
-    catch (error) {
-        throw new Error(`Invalid JSON input: ${error.message}`);
-    }
-}
-function setValueAtPath(obj, path, value) {
-    const keys = path.split('.');
-    let current = obj;
-    for (let i = 0; i < keys.length - 1; i++) {
-        const key = keys[i];
-        const nextKeyIsArrayIndex = /^\d+$/.test(keys[i + 1]);
-        if (!current[key] || typeof current[key] !== (nextKeyIsArrayIndex ? 'object' : 'object')) {
-            if (current[key] && ((nextKeyIsArrayIndex && !Array.isArray(current[key])) || (!nextKeyIsArrayIndex && Array.isArray(current[key])))) {
-                // Path conflict, overwriting.
-            }
-            current[key] = nextKeyIsArrayIndex ? [] : {};
-        }
-        current = current[key];
-    }
-    current[keys[keys.length - 1]] = value;
-}
-async function processUpload(file, allowedTypes) {
-    if (!file.name || typeof file.size !== 'number' || !file.type) {
-        throw new Error('Invalid file properties: name, size, or type is missing or invalid.');
-    }
-    const stream = await file.stream();
-    const buffer = await streamToBuffer(stream);
-    const uint8ArrayForFileType = new Uint8Array(buffer.buffer, buffer.byteOffset, buffer.byteLength);
-    const fileTypeInfo = await fileTypeFromBuffer(uint8ArrayForFileType);
-    let mimeType = file.type;
-    if (fileTypeInfo) {
-        mimeType = fileTypeInfo.mime;
-    }
-    else {
-        try {
-            const isTextResult = await isText(file.name, buffer);
-            if (isTextResult === true) {
-                mimeType = 'text/plain';
+        for (const p of paths) {
+            if (typeof p !== 'string') {
+                return `Invalid path in map entry '${key}': expected string.`;
             }
         }
-        catch (err) {
-            // isText check failed, proceed with original mimeType
-        }
     }
-    if (allowedTypes && !allowedTypes.includes(mimeType)) {
-        throw new Error(`File type ${mimeType} is not allowed. Allowed types: ${allowedTypes.join(', ')}`);
-    }
-    const upload = new Upload();
-    upload.resolve({
-        fileSize: file.size,
-        fileName: file.name,
-        mimeType: mimeType,
-        encoding: 'binary',
-        createReadStream: () => bufferToStream(buffer)
-    });
-    return upload;
+    return null;
 }
-/**
- * Processes a GraphQL multipart request with file uploads.
- */
+/** Processes a GraphQL multipart request with file uploads. Supports batching per the spec. */
 export async function uploadProcess(request, contextValueInput, server, settings) {
     try {
         const formData = await request.formData();
         const files = await extractFiles(formData);
-        const mapString = formData.get('map');
-        const operationsString = formData.get('operations');
-        if (!mapString || !operationsString) {
-            throw new Error('Missing map or operations in form data.');
+        const mapRaw = formData.get('map');
+        const operationsRaw = formData.get('operations');
+        if (!mapRaw || !operationsRaw || typeof mapRaw !== 'string' || typeof operationsRaw !== 'string') {
+            return NextResponse.json({ errors: [{ message: 'Missing or invalid map/operations in form data.' }] }, { status: 400 });
         }
-        const map = sanitizeAndValidateJSON(mapString);
-        const operations = sanitizeAndValidateJSON(operationsString);
+        const mapString = mapRaw;
+        const operationsString = operationsRaw;
+        // Parse and validate the map field (must be an object, not array).
+        let map;
+        try {
+            map = sanitizeAndValidateJSON(mapString);
+        }
+        catch {
+            return NextResponse.json({ errors: [{ message: 'Invalid JSON in the map multipart field.' }] }, { status: 400 });
+        }
+        const mapError = validateMap(map);
+        if (mapError) {
+            return NextResponse.json({ errors: [{ message: mapError }] }, { status: 400 });
+        }
+        // Parse the operations field (object or array for batching).
+        let parsedOperations;
+        try {
+            parsedOperations = parseOperationsJSON(operationsString);
+        }
+        catch {
+            return NextResponse.json({ errors: [{ message: 'Invalid JSON in the operations multipart field.' }] }, { status: 400 });
+        }
+        // Check maxFiles limit.
+        if (settings?.maxFiles && Object.keys(map).length > settings.maxFiles) {
+            return NextResponse.json({ errors: [{ message: `${settings.maxFiles} max file uploads exceeded.` }] }, { status: 413 });
+        }
+        // Normalize operations into a keyed object for path resolution.
+        // Single: paths are "variables.file" → use the operation object directly.
+        // Batch: paths are "0.variables.file" → use indices as keys in a wrapper object.
+        const isBatch = Array.isArray(parsedOperations);
+        let operationsRoot;
+        if (isBatch) {
+            operationsRoot = {};
+            for (let i = 0; i < parsedOperations.length; i++) {
+                const op = parsedOperations[i];
+                if (!op.variables)
+                    op.variables = {};
+                operationsRoot[String(i)] = op;
+            }
+        }
+        else {
+            const singleOp = parsedOperations;
+            if (!singleOp.variables)
+                singleOp.variables = {};
+            operationsRoot = singleOp;
+        }
+        // Process files and resolve Upload instances at mapped paths.
         const fileProcessingPromises = [];
-        if (!operations.variables) {
-            operations.variables = {};
-        }
         for (const fileKeyInMap of Object.keys(map)) {
             const file = files[fileKeyInMap];
             if (!file) {
-                map[fileKeyInMap].forEach(path => {
-                    setValueAtPath(operations, path, null);
-                });
+                // Per spec: reject Upload promise when file is missing from the request.
+                for (const filePath of map[fileKeyInMap]) {
+                    const missingUpload = new Upload();
+                    missingUpload.reject(new Error('File missing in the request.'));
+                    setValueAtPath(operationsRoot, filePath, missingUpload);
+                }
                 continue;
             }
             if (settings?.maxFileSize && file.size > settings.maxFileSize) {
-                return NextResponse.json({ errors: [{ message: `File ${file.name} size is too large. Maximum allowed size is ${settings.maxFileSize / (1024 * 1024)}MB.` }] }, { status: 413 });
+                return NextResponse.json({ errors: [{ message: `File ${file.name} size is too large. Maximum allowed size is ${(settings.maxFileSize / (1024 * 1024)).toFixed(2)}MB.` }] }, { status: 413 });
             }
             const variablePaths = map[fileKeyInMap];
             const filePromise = processUpload(file, settings?.allowedTypes)
                 .then(uploadInstance => {
-                variablePaths.forEach(path => {
-                    setValueAtPath(operations, path, uploadInstance);
-                });
+                for (const filePath of variablePaths) {
+                    setValueAtPath(operationsRoot, filePath, uploadInstance);
+                }
             })
-                .catch(error => {
-                variablePaths.forEach(path => {
+                .catch((error) => {
+                for (const filePath of variablePaths) {
                     const uploadError = new Upload();
                     uploadError.reject(new Error(`Failed to process file ${file.name}: ${error.message}`));
-                    setValueAtPath(operations, path, uploadError);
-                });
-                throw new Error(`Failed to process file ${file.name}: ${error.message}`);
+                    setValueAtPath(operationsRoot, filePath, uploadError);
+                }
             });
             fileProcessingPromises.push(filePromise);
         }
-        try {
-            await Promise.all(fileProcessingPromises);
-        }
-        catch (processingError) {
-            // Individual file processing errors are handled by rejecting Upload.promise.
-        }
-        const response = await server.executeOperation({ query: operations.query, variables: operations.variables }, { contextValue: contextValueInput });
-        if (response.body.kind === 'single') {
-            return NextResponse.json(response.body.singleResult);
-        }
-        else if (response.body.kind === 'incremental') {
-            const { initialResult, subsequentResults } = response.body;
-            const collectedSubsequentResults = [];
-            for await (const result of subsequentResults) {
-                collectedSubsequentResults.push(result);
+        await Promise.all(fileProcessingPromises);
+        // Execute operations and collect results.
+        if (isBatch) {
+            const results = [];
+            const sortedKeys = Object.keys(operationsRoot).sort((a, b) => Number(a) - Number(b));
+            for (const key of sortedKeys) {
+                const op = operationsRoot[key];
+                const response = await server.executeOperation({ query: op.query, variables: op.variables || {} }, { contextValue: contextValueInput });
+                results.push(await collectResponse(response));
             }
-            return NextResponse.json({
-                initialResult,
-                subsequentResults: collectedSubsequentResults,
-            });
+            return NextResponse.json(results);
         }
-        return NextResponse.json({ errors: [{ message: 'Unexpected server response format' }] }, { status: 500 });
+        const response = await server.executeOperation({ query: operationsRoot.query, variables: operationsRoot.variables }, { contextValue: contextValueInput });
+        return NextResponse.json(await collectResponse(response));
     }
     catch (error) {
         const errorMessage = error instanceof Error ? error.message : 'Unknown error during upload processing.';

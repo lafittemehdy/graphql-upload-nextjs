@@ -1,58 +1,88 @@
-# Next.js Example with GraphQL Upload
+# Example: GraphQL File Upload with Next.js
 
-This example project demonstrates how to integrate GraphQL file uploads into a typical Next.js starter application created with `create-next-app`. The example uses only the `api/graphql/route` to showcase how to use the middleware and Upload scalar in this package to enable GraphQL multipart requests (file uploads via queries and mutations) with Apollo Server in a Next.js integration.
+A working example of [graphql-upload-nextjs](https://github.com/lafittemehdy/graphql-upload-nextjs) integrated into a Next.js 16 application with Apollo Server 5.
+
+## Stack
+
+- [Next.js](https://nextjs.org) 16 (App Router, Turbopack)
+- [React](https://react.dev) 19
+- [Apollo Server](https://www.apollographql.com/docs/apollo-server) 5
+- [Apollo Client](https://www.apollographql.com/docs/react) 4
+- [Tailwind CSS](https://tailwindcss.com) 4
+- [Biome](https://biomejs.dev) (linting and formatting)
+- [TypeScript](https://www.typescriptlang.org) 5
 
 ## Getting Started
 
-To get started with this example, clone the repository and navigate to the project directory:
-
 ```bash
 git clone https://github.com/lafittemehdy/graphql-upload-nextjs.git
-cd graphql-upload-nextjs # Enter the project directory
-cd examples/example-graphql-upload-nextjs # Navigate to the example
-```
-
-Install the dependencies:
-
-```bash
+cd graphql-upload-nextjs/examples/example-graphql-upload-nextjs
 npm install
-# or
-pnpm install
-# or
-yarn install
-```
-
-Start the development server, which includes the Apollo Studio Sandbox at `/api/graphql`:
-
-```bash
 npm run dev
-# or
-pnpm run dev
-# or
-yarn dev
 ```
 
-Your application will run at [http://localhost:3000](http://localhost:3000), where you can access the homepage of the project or go directly to the sandbox at `/api/graphql`.
+Open [http://localhost:3000](http://localhost:3000) for the homepage, or go directly to [http://localhost:3000/api/graphql](http://localhost:3000/api/graphql) to open the Apollo Sandbox.
 
-## Usage
+## Available Mutations
 
-This example demonstrates how to upload files using GraphQL mutations. The file upload functionality is available to test through the Apollo Sandbox, where you can try mutations and add files with the sandbox interface.
+The GraphQL API exposes these mutations for testing file uploads:
 
-To upload a file, select a file using the file input field, set the key to the variable, and click the mutation button. The uploaded file will be stored in the `public` directory, which is not recommended for production.
+**Single file upload:**
+```graphql
+mutation UploadFile($file: Upload!) {
+  uploadFile(file: $file) {
+    encoding
+    filename
+    fileSize
+    mimetype
+    uri
+  }
+}
+```
 
-## Note
+**Multiple file upload:**
+```graphql
+mutation UploadFiles($files: [Upload!]!) {
+  uploadFiles(files: $files) {
+    encoding
+    filename
+    fileSize
+    mimetype
+    uri
+  }
+}
+```
 
-This example imports `graphql-upload-nextjs` directly as a package. If you are developing the package locally, you can use `npm link` to test your changes in this example.
+### Testing with Apollo Sandbox
 
-1.  Navigate to the root directory of the `graphql-upload-nextjs` package and run `npm link`.
-2.  Navigate to this example's directory (`examples/example-graphql-upload-nextjs`) and run `npm link graphql-upload-nextjs`.
+1. Open [http://localhost:3000/api/graphql](http://localhost:3000/api/graphql).
+2. Write a mutation (e.g., `UploadFile` above).
+3. In the Variables panel, set `{"file": null}`.
+4. Use the file upload button in the Sandbox to attach a file to the `file` variable.
+5. Run the mutation.
 
-This will create a symbolic link from this project's `node_modules` to your local `graphql-upload-nextjs` package, allowing you to test your changes live.
+### Validation Rules
 
-## Contributing
+- **Allowed MIME types:** `image/jpeg`, `image/png`, `text/plain`
+- **Max file size:** 10MB
+- **Filename sanitization:** `path.basename()` prevents path traversal
 
-Contributions are welcome! If you find any issues or have suggestions for improvements, please open an issue or submit a pull request.
+> **Note:** Uploaded files are stored in `./public/` for demonstration purposes. This is insecure for production — use cloud storage or a secure file system location.
+
+## Scripts
+
+| Script | Description |
+|---|---|
+| `npm run dev` | Start the development server (Turbopack). |
+| `npm run build` | Build for production. |
+| `npm run start` | Start the production server. |
+| `npm run lint` | Run Biome linter. |
+| `npm run format` | Format code with Biome. |
+
+## Local Development
+
+This example references the parent package via `"graphql-upload-nextjs": "file:../.."`  in `package.json`. Changes to the parent `src/index.ts` are reflected after running `npm run build` in the package root.
 
 ## License
 
-This project is licensed under the MIT License. See the [LICENSE](LICENSE) file for more information.
+MIT. See [LICENSE](https://github.com/lafittemehdy/graphql-upload-nextjs/blob/master/LICENSE).
