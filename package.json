@@ -7,22 +7,22 @@
     "url": "https://github.com/lafittemehdy/graphql-upload-nextjs/issues"
   },
   "dependencies": {
-    "@apollo/server": "^5.4.0",
-    "file-type": "^21.3.3",
-    "graphql": "^16.13.1",
+    "@apollo/server": "^5.5.1",
+    "file-type": "^22.0.1",
+    "graphql": "^16.14.0",
     "istextorbinary": "^9.5.0",
-    "next": "^16.1.7"
+    "next": "^16.2.6"
   },
   "description": "The middleware and Upload scalar in this package enable GraphQL multipart requests (file uploads via queries and mutations) in your Apollo Server Next.js integration.",
   "devDependencies": {
     "@types/jest": "^30.0.0",
-    "@types/node": "^25.5.0",
+    "@types/node": "^25.8.0",
     "husky": "^9.1.7",
-    "jest": "^30.3.0",
+    "jest": "^30.4.2",
     "nodemon": "^3.1.14",
-    "ts-jest": "^29.4.6",
-    "typescript": "^5.9.3",
-    "undici": "^7.24.4"
+    "ts-jest": "^29.4.9",
+    "typescript": "^6.0.3",
+    "undici": "^8.3.0"
   },
   "files": [
     "LICENSE",
@@ -49,6 +49,9 @@
   "license": "MIT",
   "main": "index.js",
   "name": "graphql-upload-nextjs",
+  "overrides": {
+    "postcss": "8.5.14"
+  },
   "publishConfig": {
     "access": "public",
     "provenance": true
@@ -63,7 +66,7 @@
     "prepublishOnly": "npm run build && npm test",
     "start": "tsc && node index.js",
     "test": "jest",
-    "prepare": "husky"
+    "prepare": "husky || exit 0"
   },
   "type": "module",
   "types": "index.d.ts",

@@ -6,6 +6,9 @@ on:
   push:
     branches: [main, master]
 
+permissions:
+  contents: read
+
 jobs:
   test:
     name: Test (Node.js ${{ matrix.node-version }})
@@ -15,29 +18,69 @@ jobs:
       matrix:
         node-version: [22, 24]
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
         with:
           node-version: ${{ matrix.node-version }}
           cache: npm
-      - run: npm ci
-      - run: npm run build
-      - run: npm test
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build
+        run: npm run build
+
+      - name: Test
+        run: npm test
 
   example:
     name: Example (build + lint)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
         with:
           node-version: 24
           cache: npm
-      - run: npm ci
-      - run: npm run build
-      - working-directory: examples/example-graphql-upload-nextjs
+          cache-dependency-path: |
+            package-lock.json
+            examples/example-graphql-upload-nextjs/package-lock.json
+
+      - name: Install root dependencies
         run: npm ci
-      - working-directory: examples/example-graphql-upload-nextjs
+
+      - name: Build package
         run: npm run build
-      - working-directory: examples/example-graphql-upload-nextjs
+
+      - name: Install example dependencies
+        working-directory: examples/example-graphql-upload-nextjs
+        run: npm ci
+
+      - name: Build example
+        working-directory: examples/example-graphql-upload-nextjs
+        run: npm run build
+
+      - name: Lint example
+        working-directory: examples/example-graphql-upload-nextjs
         run: npm run lint
+
+  ci-success:
+    name: CI Success
+    runs-on: ubuntu-latest
+    needs: [test, example]
+    if: always()
+    steps:
+      - name: Verify required jobs
+        run: |
+          for result in "${{ needs.test.result }}" "${{ needs.example.result }}"; do
+            if [ "$result" != "success" ]; then
+              echo "CI did not pass."
+              exit 1
+            fi
+          done

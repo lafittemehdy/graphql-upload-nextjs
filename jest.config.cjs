@@ -6,5 +6,8 @@ module.exports = {
     '^next/server\\.js$': '<rootDir>/tests/mocks/next-server.cjs',
   },
   preset: 'ts-jest',
+  transform: {
+    '^.+\\.tsx?$': ['ts-jest', { tsconfig: 'tsconfig.test.json' }],
+  },
   testEnvironment: 'node',
 }

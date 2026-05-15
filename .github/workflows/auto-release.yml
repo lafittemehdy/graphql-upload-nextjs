@@ -1,0 +1,78 @@
+name: Auto Release
+
+on:
+  push:
+    branches: [main, master]
+    paths:
+      - package.json
+      - package-lock.json
+      - examples/example-graphql-upload-nextjs/package-lock.json
+
+permissions:
+  contents: write
+
+concurrency:
+  group: auto-release
+  cancel-in-progress: false
+
+jobs:
+  auto-release:
+    name: Auto-release on dependency update
+    runs-on: ubuntu-latest
+    if: github.actor == 'dependabot[bot]' || contains(github.event.head_commit.message, 'build(deps') || contains(github.event.head_commit.message, 'dependabot')
+
+    steps:
+      - name: Check release token
+        env:
+          RELEASE_TOKEN: ${{ secrets.RELEASE_TOKEN }}
+        run: |
+          if [ -z "$RELEASE_TOKEN" ]; then
+            echo "::error::RELEASE_TOKEN is required to push version tags and trigger publishing."
+            exit 1
+          fi
+
+      - name: Checkout repository
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          ref: ${{ github.ref_name }}
+          token: ${{ secrets.RELEASE_TOKEN }}
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24.x
+          package-manager-cache: false
+
+      - name: Sync branch
+        run: git pull --ff-only origin "${GITHUB_REF_NAME}"
+
+      - name: Configure git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Bump patch version
+        id: bump
+        run: |
+          npm version patch --no-git-tag-version
+          npm install --package-lock-only
+          npm install --package-lock-only --prefix examples/example-graphql-upload-nextjs
+          VERSION="v$(node -p "require('./package.json').version")"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Commit and tag version bump
+        run: |
+          git add package.json package-lock.json examples/example-graphql-upload-nextjs/package-lock.json
+          git commit -m "chore: bump version to ${{ steps.bump.outputs.version }}"
+          git tag "${{ steps.bump.outputs.version }}"
+          git push origin "HEAD:${GITHUB_REF_NAME}" "${{ steps.bump.outputs.version }}"
+
+      - name: Create GitHub Release
+        run: |
+          gh release create "${{ steps.bump.outputs.version }}" \
+            --title "${{ steps.bump.outputs.version }}" \
+            --notes "Automated release for dependency updates." \
+            --latest
+        env:
+          GH_TOKEN: ${{ secrets.RELEASE_TOKEN }}
