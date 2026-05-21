@@ -5,7 +5,7 @@
 [![license](https://img.shields.io/npm/l/graphql-upload-nextjs.svg)](https://github.com/lafittemehdy/graphql-upload-nextjs/blob/master/LICENSE)
 [![GraphQL multipart request spec](https://img.shields.io/badge/spec-graphql--multipart--request-blue)](https://github.com/jaydenseric/graphql-multipart-request-spec)
 [![Node.js](https://img.shields.io/badge/node-%3E%3D22-brightgreen)](https://nodejs.org)
-[![TypeScript](https://img.shields.io/badge/TypeScript-5-blue)](https://www.typescriptlang.org)
+[![TypeScript](https://img.shields.io/badge/TypeScript-6-blue)](https://www.typescriptlang.org)
 
 A [GraphQL multipart request spec](https://github.com/jaydenseric/graphql-multipart-request-spec) implementation for [Next.js](https://nextjs.org) App Router with [Apollo Server](https://www.apollographql.com/docs/apollo-server). Enables file uploads via GraphQL mutations using the `Upload` scalar, with built-in MIME type verification via magic bytes.
 
@@ -16,6 +16,7 @@ A [GraphQL multipart request spec](https://github.com/jaydenseric/graphql-multip
 - Supports single file uploads, multiple file uploads, and operation batching.
 - File deduplication (one file mapped to multiple operation paths).
 - MIME type verified via magic bytes using [file-type](https://npm.im/file-type), not trusting client headers.
+- Unknown binary files fall back to `application/octet-stream` instead of the client-provided MIME type.
 - Configurable `allowedTypes`, `maxFileSize`, and `maxFiles`.
 - Only reads 4KB for MIME detection — streams the rest directly from `Blob`.
 - Spec-compatible property names: `filename`, `mimetype`, `encoding`, `createReadStream`.
@@ -166,16 +167,16 @@ export const OPTIONS = requestHandler;
 ```typescript
 await uploadProcess(request, context, server, {
     allowedTypes: ["image/jpeg", "image/png", "text/plain"],
-    maxFiles: 10,
     maxFileSize: 10 * 1024 * 1024, // 10MB
+    maxFiles: 10,
 });
 ```
 
 | Option | Type | Default | Description |
 |---|---|---|---|
-| `allowedTypes` | `string[]` | `undefined` | Restrict MIME types. Verified via magic bytes. |
-| `maxFiles` | `number` | `undefined` | Max files per request. Returns 413 if exceeded. |
-| `maxFileSize` | `number` | `undefined` | Max file size in bytes. Returns 413 if exceeded. |
+| `allowedTypes` | `string[]` | `undefined` | Restrict MIME types. Checked against the detected MIME type; unknown binary files are `application/octet-stream`. |
+| `maxFileSize` | `number` | `undefined` | Max file size in bytes. Must be finite and non-negative. Returns 413 if exceeded. |
+| `maxFiles` | `number` | `undefined` | Max files per request. Must be finite and non-negative. Returns 413 if exceeded. |
 
 ### Client Usage
 
@@ -268,6 +269,7 @@ The spec defines a [multipart form field structure](https://github.com/jaydenser
 |---|---|
 | MIME magic byte verification | Real file type detected via [file-type](https://npm.im/file-type), not trusting client-provided `Content-Type`. |
 | `allowedTypes` filtering | Server-side restriction of accepted MIME types. |
+| Unknown binary fallback | Files with no recognized magic bytes and non-text contents are reported as `application/octet-stream`. |
 | `fileSize` property | File size in bytes available on the resolved file object. |
 
 ### Limitations
@@ -299,6 +301,12 @@ npm test
 ```
 
 CI runs automatically on push and pull requests via GitHub Actions (build + test on Node.js 22/24, example build + lint).
+
+Please read [CONTRIBUTING.md](CONTRIBUTING.md) and [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md) before opening a pull request.
+
+## Security
+
+Please read [SECURITY.md](SECURITY.md) before reporting security-sensitive issues.
 
 ## License
 

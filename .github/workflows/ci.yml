@@ -30,11 +30,17 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Audit production dependencies
+        run: npm audit --omit=dev
+
       - name: Build
         run: npm run build
 
       - name: Test
         run: npm test
+
+      - name: Verify package contents
+        run: npm pack --dry-run --json
 
   example:
     name: Example (build + lint)
@@ -61,6 +67,10 @@ jobs:
       - name: Install example dependencies
         working-directory: examples/example-graphql-upload-nextjs
         run: npm ci
+
+      - name: Audit example dependencies
+        working-directory: examples/example-graphql-upload-nextjs
+        run: npm audit
 
       - name: Build example
         working-directory: examples/example-graphql-upload-nextjs

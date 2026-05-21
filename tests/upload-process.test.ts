@@ -125,6 +125,51 @@ describe('uploadProcess', () => {
             const response = await uploadProcess(request, {}, server)
             expect(response.status).toBe(400)
         })
+
+        it.each([
+            '',
+            'variables..file',
+            'variables.__proto__.x',
+            'constructor.prototype.x',
+        ])('returns 400 for invalid map path "%s"', async (path) => {
+            const fd = buildFormData(
+                { query: 'mutation($f:Upload!){up(f:$f){ok}}', variables: { f: null } },
+                { '0': [path] },
+                { '0': { content: 'data', name: 'a.txt', type: 'text/plain' } },
+            )
+            const request = createMockRequest(fd)
+            const { server } = createMockServer()
+
+            const response = await uploadProcess(request, {}, server)
+            expect(response.status).toBe(400)
+        })
+
+        it.each([
+            { caseName: 'null operation', operations: [null] },
+            { caseName: 'missing query', operations: [{}] },
+            { caseName: 'non-string query', operations: [{ query: 42 }] },
+            { caseName: 'null variables', operations: [{ query: '{ hello }', variables: null }] },
+            { caseName: 'array variables', operations: [{ query: '{ hello }', variables: [] }] },
+        ])('returns 400 for malformed batch operation: $caseName', async ({ operations }) => {
+            const fd = buildFormData(operations, {})
+            const request = createMockRequest(fd)
+            const { server } = createMockServer()
+
+            const response = await uploadProcess(request, {}, server)
+            expect(response.status).toBe(400)
+        })
+
+        it('returns 400 for a malformed single operation', async () => {
+            const fd = buildFormData(
+                { query: 42 },
+                {},
+            )
+            const request = createMockRequest(fd)
+            const { server } = createMockServer()
+
+            const response = await uploadProcess(request, {}, server)
+            expect(response.status).toBe(400)
+        })
     })
 
     describe('size and count limits (413)', () => {
@@ -155,6 +200,72 @@ describe('uploadProcess', () => {
 
             const response = await uploadProcess(request, {}, server, { maxFiles: 1 })
             expect(response.status).toBe(413)
+        })
+
+        it('returns 413 when maxFiles is 0 and a file is mapped', async () => {
+            const fd = buildFormData(
+                { query: 'mutation($f:Upload!){up(f:$f){ok}}', variables: { f: null } },
+                { '0': ['variables.f'] },
+                { '0': { content: 'data', name: 'a.txt', type: 'text/plain' } },
+            )
+            const request = createMockRequest(fd)
+            const { server } = createMockServer()
+
+            const response = await uploadProcess(request, {}, server, { maxFiles: 0 })
+            expect(response.status).toBe(413)
+        })
+
+        it('allows an empty file when maxFileSize is 0', async () => {
+            const fd = buildFormData(
+                { query: 'mutation($f:Upload!){up(f:$f){ok}}', variables: { f: null } },
+                { '0': ['variables.f'] },
+                { '0': { content: '', name: 'empty.txt', type: 'text/plain' } },
+            )
+            const request = createMockRequest(fd)
+            const { calls, server } = createMockServer()
+
+            const response = await uploadProcess(request, {}, server, { maxFileSize: 0 })
+            expect(response.status).toBe(200)
+            expect(calls).toHaveLength(1)
+        })
+
+        it('returns 413 for a non-empty file when maxFileSize is 0', async () => {
+            const fd = buildFormData(
+                { query: 'mutation($f:Upload!){up(f:$f){ok}}', variables: { f: null } },
+                { '0': ['variables.f'] },
+                { '0': { content: 'x', name: 'non-empty.txt', type: 'text/plain' } },
+            )
+            const request = createMockRequest(fd)
+            const { server } = createMockServer()
+
+            const response = await uploadProcess(request, {}, server, { maxFileSize: 0 })
+            expect(response.status).toBe(413)
+        })
+    })
+
+    describe('settings validation (400)', () => {
+        it('returns 400 when maxFiles is negative', async () => {
+            const fd = buildFormData(
+                { query: '{ hello }', variables: {} },
+                {},
+            )
+            const request = createMockRequest(fd)
+            const { server } = createMockServer()
+
+            const response = await uploadProcess(request, {}, server, { maxFiles: -1 })
+            expect(response.status).toBe(400)
+        })
+
+        it('returns 400 when maxFileSize is not finite', async () => {
+            const fd = buildFormData(
+                { query: '{ hello }', variables: {} },
+                {},
+            )
+            const request = createMockRequest(fd)
+            const { server } = createMockServer()
+
+            const response = await uploadProcess(request, {}, server, { maxFileSize: Number.POSITIVE_INFINITY })
+            expect(response.status).toBe(400)
         })
     })
 

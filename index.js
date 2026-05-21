@@ -3,6 +3,7 @@ import { GraphQLError, GraphQLScalarType } from 'graphql';
 import { isText } from 'istextorbinary';
 import { NextResponse } from 'next/server.js';
 import { Readable } from 'stream';
+const DEFAULT_MIME_TYPE = 'application/octet-stream';
 /**
  * Represents an instance of a file upload.
  * Holds a promise that resolves with the file details once processed.
@@ -90,8 +91,8 @@ export function parseOperationsJSON(input) {
  * and returns a resolved Upload instance with streaming file access.
  */
 async function processUpload(file, allowedTypes) {
-    if (!file.name || typeof file.size !== 'number' || !file.type) {
-        throw new Error('Invalid file properties: name, size, or type is missing or invalid.');
+    if (!file.name || typeof file.size !== 'number' || !Number.isFinite(file.size) || file.size < 0) {
+        throw new Error('Invalid file properties: name or size is missing or invalid.');
     }
     const blob = file;
     // Only read the first 4100 bytes for MIME type detection via magic bytes.
@@ -99,7 +100,7 @@ async function processUpload(file, allowedTypes) {
     const DETECTION_BYTES = 4100;
     const headerBuffer = Buffer.from(await blob.slice(0, DETECTION_BYTES).arrayBuffer());
     const fileTypeInfo = await fileTypeFromBuffer(new Uint8Array(headerBuffer.buffer, headerBuffer.byteOffset, headerBuffer.byteLength));
-    let mimetype = file.type;
+    let mimetype = DEFAULT_MIME_TYPE;
     if (fileTypeInfo) {
         mimetype = fileTypeInfo.mime;
     }
@@ -110,7 +111,7 @@ async function processUpload(file, allowedTypes) {
             }
         }
         catch {
-            // Fallback: isText detection failed, proceeding with original mimetype from FormData.
+            // Fallback: isText detection failed, keeping the unknown binary default.
         }
     }
     if (allowedTypes && !allowedTypes.includes(mimetype)) {
@@ -142,6 +143,37 @@ export function sanitizeAndValidateJSON(input) {
 }
 /** Dangerous property names that could lead to prototype pollution. */
 const BLOCKED_KEYS = new Set(['__proto__', 'constructor', 'prototype']);
+/** Checks whether a value is a plain object record suitable for GraphQL variables. */
+function isObjectRecord(value) {
+    return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+/** Validates the minimal GraphQL operation shape required for execution. */
+function validateOperation(operation, label) {
+    if (!isObjectRecord(operation)) {
+        return `Invalid ${label}: expected an operation object.`;
+    }
+    if (typeof operation.query !== 'string') {
+        return `Invalid ${label}: expected query to be a string.`;
+    }
+    if (operation.variables !== undefined && !isObjectRecord(operation.variables)) {
+        return `Invalid ${label}: expected variables to be an object when provided.`;
+    }
+    return null;
+}
+/** Validates upload process settings before request body processing starts. */
+function validateSettings(settings) {
+    if (settings?.maxFileSize !== undefined && (typeof settings.maxFileSize !== 'number' ||
+        !Number.isFinite(settings.maxFileSize) ||
+        settings.maxFileSize < 0)) {
+        return 'Invalid maxFileSize setting: expected a finite non-negative number.';
+    }
+    if (settings?.maxFiles !== undefined && (typeof settings.maxFiles !== 'number' ||
+        !Number.isFinite(settings.maxFiles) ||
+        settings.maxFiles < 0)) {
+        return 'Invalid maxFiles setting: expected a finite non-negative number.';
+    }
+    return null;
+}
 /** Sets a value at a dot-notation path in a nested object, creating intermediate containers as needed. */
 export function setValueAtPath(obj, path, value) {
     const keys = path.split('.');
@@ -192,6 +224,18 @@ export function validateMap(map) {
             if (typeof p !== 'string') {
                 return `Invalid path in map entry '${key}': expected string.`;
             }
+            if (!p) {
+                return `Invalid path in map entry '${key}': path cannot be empty.`;
+            }
+            const segments = p.split('.');
+            for (const segment of segments) {
+                if (!segment) {
+                    return `Invalid path in map entry '${key}': path cannot contain empty segments.`;
+                }
+                if (BLOCKED_KEYS.has(segment)) {
+                    return `Invalid path segment in map entry '${key}': '${segment}' is not allowed.`;
+                }
+            }
         }
     }
     return null;
@@ -199,6 +243,10 @@ export function validateMap(map) {
 /** Processes a GraphQL multipart request with file uploads. Supports batching per the spec. */
 export async function uploadProcess(request, contextValueInput, server, settings) {
     try {
+        const settingsError = validateSettings(settings);
+        if (settingsError) {
+            return NextResponse.json({ errors: [{ message: settingsError }] }, { status: 400 });
+        }
         const formData = await request.formData();
         const files = await extractFiles(formData);
         const mapRaw = formData.get('map');
@@ -228,8 +276,22 @@ export async function uploadProcess(request, contextValueInput, server, settings
         catch {
             return NextResponse.json({ errors: [{ message: 'Invalid JSON in the operations multipart field.' }] }, { status: 400 });
         }
+        if (Array.isArray(parsedOperations)) {
+            for (let i = 0; i < parsedOperations.length; i++) {
+                const operationError = validateOperation(parsedOperations[i], `operation at index ${i}`);
+                if (operationError) {
+                    return NextResponse.json({ errors: [{ message: operationError }] }, { status: 400 });
+                }
+            }
+        }
+        else {
+            const operationError = validateOperation(parsedOperations, 'operation');
+            if (operationError) {
+                return NextResponse.json({ errors: [{ message: operationError }] }, { status: 400 });
+            }
+        }
         // Check maxFiles limit.
-        if (settings?.maxFiles && Object.keys(map).length > settings.maxFiles) {
+        if (settings?.maxFiles !== undefined && Object.keys(map).length > settings.maxFiles) {
             return NextResponse.json({ errors: [{ message: `${settings.maxFiles} max file uploads exceeded.` }] }, { status: 413 });
         }
         // Normalize operations into a keyed object for path resolution.
@@ -238,9 +300,10 @@ export async function uploadProcess(request, contextValueInput, server, settings
         const isBatch = Array.isArray(parsedOperations);
         let operationsRoot;
         if (isBatch) {
+            const batchOperations = parsedOperations;
             operationsRoot = {};
-            for (let i = 0; i < parsedOperations.length; i++) {
-                const op = parsedOperations[i];
+            for (let i = 0; i < batchOperations.length; i++) {
+                const op = batchOperations[i];
                 if (!op.variables)
                     op.variables = {};
                 operationsRoot[String(i)] = op;
@@ -265,7 +328,7 @@ export async function uploadProcess(request, contextValueInput, server, settings
                 }
                 continue;
             }
-            if (settings?.maxFileSize && file.size > settings.maxFileSize) {
+            if (settings?.maxFileSize !== undefined && file.size > settings.maxFileSize) {
                 return NextResponse.json({ errors: [{ message: `File ${file.name} size is too large. Maximum allowed size is ${(settings.maxFileSize / (1024 * 1024)).toFixed(2)}MB.` }] }, { status: 413 });
             }
             const variablePaths = map[fileKeyInMap];

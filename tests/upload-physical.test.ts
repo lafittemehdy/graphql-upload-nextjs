@@ -202,6 +202,58 @@ describe('physical upload tests', () => {
         await expect(capturedUpload!.promise).rejects.toThrow('is not allowed')
     })
 
+    it('does not trust client-provided MIME type when enforcing allowedTypes', async () => {
+        const fd = new FormData()
+        fd.append('operations', JSON.stringify({
+            query: 'mutation($f:Upload!){up(f:$f){ok}}',
+            variables: { f: null },
+        }))
+        fd.append('map', JSON.stringify({ '0': ['variables.f'] }))
+        fd.append('0', new File([Buffer.from([0x00, 0xff, 0xab, 0xcd])], 'not-a-png.bin', { type: 'image/png' }))
+
+        const request = createMockRequest(fd)
+
+        let capturedUpload: Upload | undefined
+        const server = {
+            executeOperation: async (params: any) => {
+                capturedUpload = params.variables.f
+                return { body: { kind: 'single' as const, singleResult: { data: null } } }
+            },
+        }
+
+        await uploadProcess(request, {}, server, {
+            allowedTypes: ['image/png'],
+        })
+
+        expect(capturedUpload).toBeInstanceOf(Upload)
+        await expect(capturedUpload!.promise).rejects.toThrow('application/octet-stream is not allowed')
+    })
+
+    it('falls back to application/octet-stream when no MIME type can be detected', async () => {
+        const fd = new FormData()
+        fd.append('operations', JSON.stringify({
+            query: 'mutation($f:Upload!){up(f:$f){ok}}',
+            variables: { f: null },
+        }))
+        fd.append('map', JSON.stringify({ '0': ['variables.f'] }))
+        fd.append('0', new File([Buffer.from([0x00, 0xff, 0xab, 0xcd])], 'unknown.bin'))
+
+        const request = createMockRequest(fd)
+
+        let resolvedFile: UploadFile | undefined
+        const server = {
+            executeOperation: async (params: any) => {
+                resolvedFile = await (params.variables.f as Upload).promise
+                return { body: { kind: 'single' as const, singleResult: { data: { ok: true } } } }
+            },
+        }
+
+        await uploadProcess(request, {}, server)
+
+        expect(resolvedFile).toBeDefined()
+        expect(resolvedFile!.mimetype).toBe('application/octet-stream')
+    })
+
     it('createReadStream can be called multiple times (Blob is replayable)', async () => {
         const content = 'replayable content'
         const fd = new FormData()

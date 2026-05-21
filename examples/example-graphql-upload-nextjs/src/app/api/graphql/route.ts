@@ -140,19 +140,15 @@ const handler = startServerAndCreateNextHandler<NextRequest, Context>(server, {
 
 /** Routes requests to the appropriate handler based on content type. */
 const requestHandler = async (request: NextRequest) => {
-  try {
-    if (request.headers.get("content-type")?.includes("multipart/form-data")) {
-      const context = await contextHandler(request);
-      return await uploadProcess(
-        request,
-        context,
-        server as ExpectedServerType<Context>,
-      );
-    }
-    return handler(request);
-  } catch (_error) {
-    throw new Error("Failed to process request.");
+  if (request.headers.get("content-type")?.includes("multipart/form-data")) {
+    const context = await contextHandler(request);
+    return await uploadProcess(
+      request,
+      context,
+      server as ExpectedServerType<Context>,
+    );
   }
+  return handler(request);
 };
 
 export const GET = requestHandler;

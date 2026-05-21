@@ -5,6 +5,8 @@ import { isText } from 'istextorbinary'
 import { NextResponse } from 'next/server.js'
 import { Readable } from 'stream'
 
+const DEFAULT_MIME_TYPE = 'application/octet-stream'
+
 /** Represents a processed file with metadata and stream access. */
 export interface File {
     createReadStream: () => NodeJS.ReadableStream
@@ -39,6 +41,19 @@ export interface MinimalRequest {
 interface ServerExecuteOperationParams {
     query: string
     variables: Record<string, unknown>
+}
+
+/** Normalized GraphQL operation shape passed to Apollo Server. */
+interface Operation {
+    query: string
+    variables?: Record<string, unknown>
+}
+
+/** Optional upload processing limits and MIME allow-list. */
+interface UploadProcessSettings {
+    allowedTypes?: string[]
+    maxFileSize?: number
+    maxFiles?: number
 }
 
 /**
@@ -136,8 +151,8 @@ async function processUpload(
     file: FormDataFile,
     allowedTypes?: string[]
 ): Promise<Upload> {
-    if (!file.name || typeof file.size !== 'number' || !file.type) {
-        throw new Error('Invalid file properties: name, size, or type is missing or invalid.')
+    if (!file.name || typeof file.size !== 'number' || !Number.isFinite(file.size) || file.size < 0) {
+        throw new Error('Invalid file properties: name or size is missing or invalid.')
     }
 
     const blob = file as unknown as Blob
@@ -150,7 +165,7 @@ async function processUpload(
         new Uint8Array(headerBuffer.buffer, headerBuffer.byteOffset, headerBuffer.byteLength)
     )
 
-    let mimetype = file.type
+    let mimetype = DEFAULT_MIME_TYPE
     if (fileTypeInfo) {
         mimetype = fileTypeInfo.mime
     } else {
@@ -159,7 +174,7 @@ async function processUpload(
                 mimetype = 'text/plain'
             }
         } catch {
-            // Fallback: isText detection failed, proceeding with original mimetype from FormData.
+            // Fallback: isText detection failed, keeping the unknown binary default.
         }
     }
 
@@ -194,6 +209,46 @@ export function sanitizeAndValidateJSON(input: string): unknown {
 
 /** Dangerous property names that could lead to prototype pollution. */
 const BLOCKED_KEYS = new Set(['__proto__', 'constructor', 'prototype'])
+
+/** Checks whether a value is a plain object record suitable for GraphQL variables. */
+function isObjectRecord(value: unknown): value is Record<string, unknown> {
+    return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
+/** Validates the minimal GraphQL operation shape required for execution. */
+function validateOperation(operation: unknown, label: string): string | null {
+    if (!isObjectRecord(operation)) {
+        return `Invalid ${label}: expected an operation object.`
+    }
+    if (typeof operation.query !== 'string') {
+        return `Invalid ${label}: expected query to be a string.`
+    }
+    if (operation.variables !== undefined && !isObjectRecord(operation.variables)) {
+        return `Invalid ${label}: expected variables to be an object when provided.`
+    }
+    return null
+}
+
+/** Validates upload process settings before request body processing starts. */
+function validateSettings(settings?: UploadProcessSettings): string | null {
+    if (settings?.maxFileSize !== undefined && (
+        typeof settings.maxFileSize !== 'number' ||
+        !Number.isFinite(settings.maxFileSize) ||
+        settings.maxFileSize < 0
+    )) {
+        return 'Invalid maxFileSize setting: expected a finite non-negative number.'
+    }
+
+    if (settings?.maxFiles !== undefined && (
+        typeof settings.maxFiles !== 'number' ||
+        !Number.isFinite(settings.maxFiles) ||
+        settings.maxFiles < 0
+    )) {
+        return 'Invalid maxFiles setting: expected a finite non-negative number.'
+    }
+
+    return null
+}
 
 /** Sets a value at a dot-notation path in a nested object, creating intermediate containers as needed. */
 export function setValueAtPath(obj: Record<string, unknown>, path: string, value: unknown): void {
@@ -253,6 +308,18 @@ export function validateMap(map: Record<string, unknown>): string | null {
             if (typeof p !== 'string') {
                 return `Invalid path in map entry '${key}': expected string.`
             }
+            if (!p) {
+                return `Invalid path in map entry '${key}': path cannot be empty.`
+            }
+            const segments = p.split('.')
+            for (const segment of segments) {
+                if (!segment) {
+                    return `Invalid path in map entry '${key}': path cannot contain empty segments.`
+                }
+                if (BLOCKED_KEYS.has(segment)) {
+                    return `Invalid path segment in map entry '${key}': '${segment}' is not allowed.`
+                }
+            }
         }
     }
     return null
@@ -268,9 +335,17 @@ export async function uploadProcess<TContext extends Record<string, unknown>>(
             context: { contextValue: TContext }
         ) => Promise<GraphQLResponse<TContext>>
     },
-    settings?: { allowedTypes?: string[]; maxFiles?: number; maxFileSize?: number }
+    settings?: { allowedTypes?: string[]; maxFileSize?: number; maxFiles?: number }
 ): Promise<NextResponse> {
     try {
+        const settingsError = validateSettings(settings)
+        if (settingsError) {
+            return NextResponse.json(
+                { errors: [{ message: settingsError }] },
+                { status: 400 }
+            )
+        }
+
         const formData = await request.formData()
         const files = await extractFiles(formData)
 
@@ -317,8 +392,28 @@ export async function uploadProcess<TContext extends Record<string, unknown>>(
             )
         }
 
+        if (Array.isArray(parsedOperations)) {
+            for (let i = 0; i < parsedOperations.length; i++) {
+                const operationError = validateOperation(parsedOperations[i], `operation at index ${i}`)
+                if (operationError) {
+                    return NextResponse.json(
+                        { errors: [{ message: operationError }] },
+                        { status: 400 }
+                    )
+                }
+            }
+        } else {
+            const operationError = validateOperation(parsedOperations, 'operation')
+            if (operationError) {
+                return NextResponse.json(
+                    { errors: [{ message: operationError }] },
+                    { status: 400 }
+                )
+            }
+        }
+
         // Check maxFiles limit.
-        if (settings?.maxFiles && Object.keys(map).length > settings.maxFiles) {
+        if (settings?.maxFiles !== undefined && Object.keys(map).length > settings.maxFiles) {
             return NextResponse.json(
                 { errors: [{ message: `${settings.maxFiles} max file uploads exceeded.` }] },
                 { status: 413 }
@@ -332,16 +427,17 @@ export async function uploadProcess<TContext extends Record<string, unknown>>(
         let operationsRoot: Record<string, unknown>
 
         if (isBatch) {
+            const batchOperations = parsedOperations as unknown as Operation[]
             operationsRoot = {}
-            for (let i = 0; i < (parsedOperations as Record<string, unknown>[]).length; i++) {
-                const op = (parsedOperations as Record<string, unknown>[])[i]
+            for (let i = 0; i < batchOperations.length; i++) {
+                const op = batchOperations[i]
                 if (!op.variables) op.variables = {}
-                operationsRoot[String(i)] = op
+                operationsRoot[String(i)] = op as unknown as Record<string, unknown>
             }
         } else {
-            const singleOp = parsedOperations as Record<string, unknown>
+            const singleOp = parsedOperations as unknown as Operation
             if (!singleOp.variables) singleOp.variables = {}
-            operationsRoot = singleOp
+            operationsRoot = singleOp as unknown as Record<string, unknown>
         }
 
         // Process files and resolve Upload instances at mapped paths.
@@ -360,7 +456,7 @@ export async function uploadProcess<TContext extends Record<string, unknown>>(
                 continue
             }
 
-            if (settings?.maxFileSize && file.size > settings.maxFileSize) {
+            if (settings?.maxFileSize !== undefined && file.size > settings.maxFileSize) {
                 return NextResponse.json(
                     { errors: [{ message: `File ${file.name} size is too large. Maximum allowed size is ${(settings.maxFileSize / (1024 * 1024)).toFixed(2)}MB.` }] },
                     { status: 413 }

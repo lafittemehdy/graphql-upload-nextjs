@@ -4,6 +4,8 @@ updates:
     directory: "/"
     schedule:
       interval: "weekly"
+    commit-message:
+      prefix: "build(deps)"
     labels:
       - "dependencies"
     groups:
@@ -17,6 +19,8 @@ updates:
     directory: "/"
     schedule:
       interval: "weekly"
+    commit-message:
+      prefix: "build(deps)"
     labels:
       - "dependencies"
     versioning-strategy: "increase"
@@ -31,6 +35,8 @@ updates:
     directory: "/examples/example-graphql-upload-nextjs"
     schedule:
       interval: "weekly"
+    commit-message:
+      prefix: "build(deps)"
     labels:
       - "dependencies"
     versioning-strategy: "increase"

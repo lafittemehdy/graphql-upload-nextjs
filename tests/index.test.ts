@@ -191,6 +191,21 @@ describe('validateMap', () => {
         const result = validateMap({ '0': null as any })
         expect(result).toContain('expected an array')
     })
+
+    it('returns error for an empty path', () => {
+        const result = validateMap({ '0': [''] })
+        expect(result).toContain('path cannot be empty')
+    })
+
+    it('returns error for empty path segments', () => {
+        const result = validateMap({ '0': ['variables..file'] })
+        expect(result).toContain('empty segments')
+    })
+
+    it('returns error for blocked path segments', () => {
+        const result = validateMap({ '0': ['variables.__proto__.polluted'] })
+        expect(result).toContain('not allowed')
+    })
 })
 
 describe('bufferToStream and streamToBuffer', () => {
