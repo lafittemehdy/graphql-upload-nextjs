@@ -34,7 +34,7 @@
     "index.js"
   ],
   "engines": {
-    "node": ">=22.0.0"
+    "node": ">=22.13.0"
   },
   "homepage": "https://github.com/lafittemehdy/graphql-upload-nextjs#readme",
   "keywords": [
