@@ -2,7 +2,7 @@ import { createWriteStream } from "node:fs";
 import path from "node:path";
 import { pipeline } from "node:stream";
 import { gql } from "@apollo/client";
-import { ApolloServer, type GraphQLResponse } from "@apollo/server";
+import { ApolloServer } from "@apollo/server";
 import { startServerAndCreateNextHandler } from "@as-integrations/next";
 import { type File, GraphQLUpload, uploadProcess } from "graphql-upload-nextjs";
 import type { NextRequest } from "next/server.js";
@@ -120,20 +120,6 @@ const contextHandler = async (req: NextRequest): Promise<Context> => {
   return { ip, req };
 };
 
-/** Parameters for Apollo Server's executeOperation method. */
-interface ServerExecuteOperationParams {
-  query: string;
-  variables: Record<string, unknown>;
-}
-
-/** Typed wrapper for the Apollo Server instance used with uploadProcess. */
-interface ExpectedServerType<TContext extends Record<string, unknown>> {
-  executeOperation: (
-    params: ServerExecuteOperationParams,
-    context: { contextValue: TContext },
-  ) => Promise<GraphQLResponse<TContext>>;
-}
-
 const handler = startServerAndCreateNextHandler<NextRequest, Context>(server, {
   context: contextHandler,
 });
@@ -142,11 +128,7 @@ const handler = startServerAndCreateNextHandler<NextRequest, Context>(server, {
 const requestHandler = async (request: NextRequest) => {
   if (request.headers.get("content-type")?.includes("multipart/form-data")) {
     const context = await contextHandler(request);
-    return await uploadProcess(
-      request,
-      context,
-      server as ExpectedServerType<Context>,
-    );
+    return await uploadProcess(request, context, server);
   }
   return handler(request);
 };

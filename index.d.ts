@@ -1,4 +1,3 @@
-import type { GraphQLResponse } from '@apollo/server';
 import { GraphQLScalarType } from 'graphql';
 import { NextResponse } from 'next/server.js';
 /** Represents a processed file with metadata and stream access. */
@@ -32,6 +31,13 @@ interface ServerExecuteOperationParams {
     query: string;
     variables: Record<string, unknown>;
 }
+/** Minimal response shape consumed from Apollo Server executeOperation. */
+interface ServerExecuteOperationResponse {
+    body: {
+        kind: string;
+        [key: string]: unknown;
+    };
+}
 /**
  * Represents an instance of a file upload.
  * Holds a promise that resolves with the file details once processed.
@@ -61,7 +67,7 @@ export declare function validateMap(map: Record<string, unknown>): string | null
 export declare function uploadProcess<TContext extends Record<string, unknown>>(request: MinimalRequest, contextValueInput: TContext, server: {
     executeOperation: (params: ServerExecuteOperationParams, context: {
         contextValue: TContext;
-    }) => Promise<GraphQLResponse<TContext>>;
+    }) => Promise<ServerExecuteOperationResponse>;
 }, settings?: {
     allowedTypes?: string[];
     maxFileSize?: number;

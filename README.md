@@ -24,7 +24,7 @@ A [GraphQL multipart request spec](https://github.com/jaydenseric/graphql-multip
 ## Installation
 
 ```bash
-npm install graphql-upload-nextjs
+npm install graphql-upload-nextjs @apollo/server @as-integrations/next graphql next
 ```
 
 ## Migrating from graphql-upload
