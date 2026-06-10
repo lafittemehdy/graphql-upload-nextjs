@@ -1,4 +1,3 @@
-import type { GraphQLResponse } from '@apollo/server'
 import { fileTypeFromBuffer } from 'file-type'
 import { GraphQLError, GraphQLScalarType } from 'graphql'
 import { isText } from 'istextorbinary'
@@ -41,6 +40,20 @@ export interface MinimalRequest {
 interface ServerExecuteOperationParams {
     query: string
     variables: Record<string, unknown>
+}
+
+/** Minimal response shape consumed from Apollo Server executeOperation. */
+interface ServerExecuteOperationResponse {
+    body: {
+        kind: string
+        [key: string]: unknown
+    }
+}
+
+interface IncrementalResponseBody {
+    kind: 'incremental'
+    initialResult: unknown
+    subsequentResults: AsyncIterable<unknown>
 }
 
 /** Normalized GraphQL operation shape passed to Apollo Server. */
@@ -103,12 +116,12 @@ export function bufferToStream(buffer: Buffer): NodeJS.ReadableStream {
 }
 
 /** Collects a GraphQL response into a serializable result object. */
-async function collectResponse<TContext>(response: GraphQLResponse<TContext>): Promise<unknown> {
+async function collectResponse(response: ServerExecuteOperationResponse): Promise<unknown> {
     if (response.body.kind === 'single') {
         return response.body.singleResult
     }
     if (response.body.kind === 'incremental') {
-        const { initialResult, subsequentResults } = response.body
+        const { initialResult, subsequentResults } = response.body as unknown as IncrementalResponseBody
         const collected = []
         for await (const result of subsequentResults) {
             collected.push(result)
@@ -333,7 +346,7 @@ export async function uploadProcess<TContext extends Record<string, unknown>>(
         executeOperation: (
             params: ServerExecuteOperationParams,
             context: { contextValue: TContext }
-        ) => Promise<GraphQLResponse<TContext>>
+        ) => Promise<ServerExecuteOperationResponse>
     },
     settings?: { allowedTypes?: string[]; maxFileSize?: number; maxFiles?: number }
 ): Promise<NextResponse> {
