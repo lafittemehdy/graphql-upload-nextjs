@@ -4,7 +4,7 @@
 [![CI](https://github.com/lafittemehdy/graphql-upload-nextjs/actions/workflows/ci.yml/badge.svg)](https://github.com/lafittemehdy/graphql-upload-nextjs/actions/workflows/ci.yml)
 [![license](https://img.shields.io/npm/l/graphql-upload-nextjs.svg)](https://github.com/lafittemehdy/graphql-upload-nextjs/blob/master/LICENSE)
 [![GraphQL multipart request spec](https://img.shields.io/badge/spec-graphql--multipart--request-blue)](https://github.com/jaydenseric/graphql-multipart-request-spec)
-[![Node.js](https://img.shields.io/badge/node-%3E%3D22-brightgreen)](https://nodejs.org)
+[![Node.js](https://img.shields.io/badge/node-%3E%3D22.13-brightgreen)](https://nodejs.org)
 [![TypeScript](https://img.shields.io/badge/TypeScript-6-blue)](https://www.typescriptlang.org)
 
 A [GraphQL multipart request spec](https://github.com/jaydenseric/graphql-multipart-request-spec) implementation for [Next.js](https://nextjs.org) App Router with [Apollo Server](https://www.apollographql.com/docs/apollo-server). Enables file uploads via GraphQL mutations using the `Upload` scalar, with built-in MIME type verification via magic bytes.

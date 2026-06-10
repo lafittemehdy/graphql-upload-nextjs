@@ -19,6 +19,11 @@ updates:
     directory: "/"
     schedule:
       interval: "weekly"
+    cooldown:
+      default-days: 2
+      semver-major-days: 7
+      semver-minor-days: 2
+      semver-patch-days: 2
     commit-message:
       prefix: "build(deps)"
     labels:
@@ -35,6 +40,11 @@ updates:
     directory: "/examples/example-graphql-upload-nextjs"
     schedule:
       interval: "weekly"
+    cooldown:
+      default-days: 2
+      semver-major-days: 7
+      semver-minor-days: 2
+      semver-patch-days: 2
     commit-message:
       prefix: "build(deps)"
     labels:
