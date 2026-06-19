@@ -13,7 +13,7 @@
   "description": "The middleware and Upload scalar in this package enable GraphQL multipart requests (file uploads via queries and mutations) in your Apollo Server Next.js integration.",
   "devDependencies": {
     "@types/jest": "^30.0.0",
-    "@types/node": "^25.9.2",
+    "@types/node": "^25.9.3",
     "graphql": "^16.14.2",
     "husky": "^9.1.7",
     "jest": "^30.4.2",
@@ -21,7 +21,7 @@
     "nodemon": "^3.1.14",
     "ts-jest": "^29.4.11",
     "typescript": "^6.0.3",
-    "undici": "^8.4.1"
+    "undici": "^8.5.0"
   },
   "files": [
     "CODE_OF_CONDUCT.md",
