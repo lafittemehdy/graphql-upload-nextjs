@@ -14,21 +14,21 @@
     "start": "next start"
   },
   "dependencies": {
-    "@apollo/client": "^4.2.7",
+    "@apollo/client": "^4.2.10",
     "@apollo/server": "^5.5.1",
     "@as-integrations/next": "^4.1.0",
     "graphql": "^16.14.0",
     "graphql-upload-nextjs": "file:../..",
     "next": "16.2.6",
-    "react": "19.2.7",
-    "react-dom": "19.2.7"
+    "react": "19.2.8",
+    "react-dom": "19.2.8"
   },
   "devDependencies": {
-    "@biomejs/biome": "2.5.4",
-    "@tailwindcss/postcss": "^4.3.2",
+    "@biomejs/biome": "2.5.7",
+    "@tailwindcss/postcss": "^4.3.3",
     "@types/node": "^25.9.1",
-    "@types/react": "^19.2.17",
-    "@types/react-dom": "^19.2.3",
+    "@types/react": "^19.2.18",
+    "@types/react-dom": "^19.2.4",
     "tailwindcss": "^4.3.0",
     "typescript": "^6.0.3"
   }
