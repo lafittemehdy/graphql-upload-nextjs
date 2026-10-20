@@ -1,3 +1,4 @@
+import { describe, expect, it } from 'vitest'
 import type { MinimalRequest } from '../src/index'
 import { Upload, uploadProcess } from '../src/index'
 
@@ -5,7 +6,7 @@ import { Upload, uploadProcess } from '../src/index'
 function createMockRequest(formData: FormData): MinimalRequest {
     return {
         formData: async () => formData,
-        headers: { get: () => null },
+        headers: new Headers({ 'Apollo-Require-Preflight': 'true' }),
     }
 }
 
@@ -333,7 +334,7 @@ describe('uploadProcess', () => {
             const response = await uploadProcess(request, {}, server)
             expect(response.status).toBe(200)
             expect(calls).toHaveLength(2)
-            expect(response.body).toBeInstanceOf(Array)
+            expect(await response.json()).toBeInstanceOf(Array)
         })
     })
 
@@ -434,9 +435,10 @@ describe('uploadProcess', () => {
 
             const response = await uploadProcess(request, {}, server)
             expect(response.status).toBe(200)
-            expect(response.body).toHaveProperty('initialResult')
-            expect(response.body).toHaveProperty('subsequentResults')
-            expect((response.body as any).subsequentResults).toHaveLength(2)
+            const body = await response.json()
+            expect(body).toHaveProperty('initialResult')
+            expect(body).toHaveProperty('subsequentResults')
+            expect(body.subsequentResults).toHaveLength(2)
         })
     })
 })

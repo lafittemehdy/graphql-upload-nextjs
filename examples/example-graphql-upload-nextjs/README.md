@@ -65,9 +65,9 @@ mutation UploadFiles($files: [Upload!]!) {
 
 - **Allowed MIME types:** `image/jpeg`, `image/png`, `text/plain`
 - **Max file size:** 10MB
-- **Filename sanitization:** `path.basename()` prevents path traversal
+- **Safe storage names:** random identifiers and detected MIME extensions prevent filename collisions and active HTML uploads; exclusive writes prevent overwrites. Original names are sanitized with `path.basename()` for display.
 
-> **Note:** Uploaded files are stored in `./public/` for demonstration purposes. This is insecure for production — use cloud storage or a secure file system location.
+> **Note:** Uploaded files are stored in `./uploads/` and served as attachments through `/uploads/[filename]`, including files added after a production build. Add authentication and durable storage before production use. Multipart clients must send `Apollo-Require-Preflight: true`.
 
 ## Scripts
 

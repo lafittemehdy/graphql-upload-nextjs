@@ -1,3 +1,4 @@
+import { describe, expect, it } from 'vitest'
 import type { File as UploadFile, MinimalRequest } from '../src/index'
 import { Upload, streamToBuffer, uploadProcess } from '../src/index'
 
@@ -23,7 +24,7 @@ const PNG_HEADER = Buffer.from([
 function createMockRequest(formData: FormData): MinimalRequest {
     return {
         formData: async () => formData,
-        headers: { get: () => null },
+        headers: new Headers({ 'Apollo-Require-Preflight': 'true' }),
     }
 }
 
@@ -195,7 +196,7 @@ describe('physical upload tests', () => {
         }
 
         await uploadProcess(request, {}, server, {
-            allowedTypes: ['text/plain', 'image/png'],
+            allowedTypes: ['image/png'],
         })
 
         expect(capturedUpload).toBeInstanceOf(Upload)

@@ -1,4 +1,6 @@
+import { randomUUID } from "node:crypto";
 import { createWriteStream } from "node:fs";
+import { mkdir } from "node:fs/promises";
 import path from "node:path";
 import { pipeline } from "node:stream";
 import { gql } from "@apollo/client";
@@ -59,11 +61,19 @@ async function processAndStoreFile(
     throw new Error(`File ${safeName} size exceeds the limit of 10MB.`);
   }
 
+  const extension =
+    mimetype === "image/jpeg"
+      ? "jpg"
+      : mimetype === "image/png"
+        ? "png"
+        : "txt";
+  const storedName = `${randomUUID()}.${extension}`;
+  await mkdir("./uploads", { recursive: true });
+
   return new Promise<GraphQLFileResponse>((resolve, reject) => {
     pipeline(
       createReadStream(),
-      // IMPORTANT: Storing files in 'public' is insecure for production. Use secure storage.
-      createWriteStream(`./public/${safeName}`),
+      createWriteStream(`./uploads/${storedName}`, { flags: "wx" }),
       (error) => {
         if (error) {
           reject(new Error(`Error during upload of ${safeName}.`));
@@ -73,7 +83,7 @@ async function processAndStoreFile(
             filename: safeName,
             fileSize,
             mimetype,
-            uri: `http://localhost:3000/${safeName}`,
+            uri: `/uploads/${storedName}`,
           });
         }
       },

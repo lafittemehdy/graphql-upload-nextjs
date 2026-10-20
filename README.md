@@ -57,6 +57,7 @@ Resolver code stays the same — `filename`, `mimetype`, `encoding`, and `create
 
 ```typescript
 import path from 'node:path'
+import { randomUUID } from 'node:crypto'
 import { createWriteStream } from 'node:fs'
 import { pipeline } from 'node:stream'
 import { gql } from '@apollo/client' // Optional: syntax highlighting only.
@@ -99,13 +100,14 @@ const resolvers = {
         ): Promise<FileResponse> => {
             const { createReadStream, encoding, filename, fileSize, mimetype } = await file;
             const safeName = path.basename(filename);
+            const storedName = randomUUID();
             return new Promise((resolve, reject) => {
                 pipeline(
                     createReadStream(),
-                    createWriteStream(`./uploads/${safeName}`),
+                    createWriteStream(`./uploads/${storedName}`, { flags: "wx" }),
                     (error) => {
                         if (error) reject(new Error("Error during file upload."));
-                        else resolve({ encoding, filename: safeName, fileSize, mimetype, uri: `/${safeName}` });
+                        else resolve({ encoding, filename: safeName, fileSize, mimetype, uri: `/${storedName}` });
                     },
                 );
             });
@@ -117,13 +119,14 @@ const resolvers = {
             const resolvedFiles = await Promise.all(files);
             return Promise.all(resolvedFiles.map(async ({ createReadStream, encoding, filename, fileSize, mimetype }) => {
                 const safeName = path.basename(filename);
+                const storedName = randomUUID();
                 return new Promise<FileResponse>((resolve, reject) => {
                     pipeline(
                         createReadStream(),
-                        createWriteStream(`./uploads/${safeName}`),
+                        createWriteStream(`./uploads/${storedName}`, { flags: "wx" }),
                         (error) => {
                             if (error) reject(new Error(`Error during upload of ${safeName}.`));
-                            else resolve({ encoding, filename: safeName, fileSize, mimetype, uri: `/${safeName}` });
+                            else resolve({ encoding, filename: safeName, fileSize, mimetype, uri: `/${storedName}` });
                         },
                     );
                 });
@@ -176,9 +179,13 @@ await uploadProcess(request, context, server, {
 |---|---|---|---|
 | `allowedTypes` | `string[]` | `undefined` | Restrict MIME types. Checked against the detected MIME type; unknown binary files are `application/octet-stream`. |
 | `maxFileSize` | `number` | `undefined` | Max file size in bytes. Must be finite and non-negative. Returns 413 if exceeded. |
-| `maxFiles` | `number` | `undefined` | Max files per request. Must be finite and non-negative. Returns 413 if exceeded. |
+| `maxFiles` | `number` | `undefined` | Max files per request, including unmapped files. Must be a non-negative safe integer. Returns 413 if exceeded. |
 
 ### Client Usage
+
+Multipart requests must send `Apollo-Require-Preflight: true` (or a non-empty `X-Apollo-Operation-Name` header). Configure your upload link with `headers: { "Apollo-Require-Preflight": "true" }`. This forces browser preflight and protects the direct execution path from cross-site form submissions. Only allow trusted origins in your CORS policy.
+
+Map paths must target existing `null` placeholders inside operation variables. Single and batched requests preserve `operationName`.
 
 When using a GraphQL client library ([apollo-upload-client](https://npm.im/apollo-upload-client), [urql](https://npm.im/@urql/exchange-multipart-fetch), [extract-files](https://npm.im/extract-files)), file uploads are constructed automatically per the spec.
 

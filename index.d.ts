@@ -28,6 +28,7 @@ export interface MinimalRequest {
 }
 /** Parameters for Apollo Server's executeOperation method. */
 interface ServerExecuteOperationParams {
+    operationName?: string;
     query: string;
     variables: Record<string, unknown>;
 }

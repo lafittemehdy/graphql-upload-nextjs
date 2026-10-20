@@ -64,7 +64,7 @@ async function collectResponse(response) {
 }
 /** Extracts File entries from multipart FormData. */
 async function extractFiles(formData) {
-    const files = {};
+    const files = Object.create(null);
     for (const [key, value] of formData.entries()) {
         if (value instanceof globalThis.File) {
             files[key] = value;
@@ -106,7 +106,7 @@ async function processUpload(file, allowedTypes) {
     }
     else {
         try {
-            if (await isText(file.name, headerBuffer)) {
+            if (await isText(null, headerBuffer)) {
                 mimetype = 'text/plain';
             }
         }
@@ -158,6 +158,9 @@ function validateOperation(operation, label) {
     if (operation.variables !== undefined && !isObjectRecord(operation.variables)) {
         return `Invalid ${label}: expected variables to be an object when provided.`;
     }
+    if (operation.operationName !== undefined && typeof operation.operationName !== 'string') {
+        return `Invalid ${label}: expected operationName to be a string when provided.`;
+    }
     return null;
 }
 /** Validates upload process settings before request body processing starts. */
@@ -168,9 +171,13 @@ function validateSettings(settings) {
         return 'Invalid maxFileSize setting: expected a finite non-negative number.';
     }
     if (settings?.maxFiles !== undefined && (typeof settings.maxFiles !== 'number' ||
-        !Number.isFinite(settings.maxFiles) ||
+        !Number.isSafeInteger(settings.maxFiles) ||
         settings.maxFiles < 0)) {
-        return 'Invalid maxFiles setting: expected a finite non-negative number.';
+        return 'Invalid maxFiles setting: expected a non-negative safe integer.';
+    }
+    if (settings?.allowedTypes !== undefined && (!Array.isArray(settings.allowedTypes) ||
+        settings.allowedTypes.some(type => typeof type !== 'string' || !type.trim()))) {
+        return 'Invalid allowedTypes setting: expected an array of non-empty MIME types.';
     }
     return null;
 }
@@ -243,12 +250,18 @@ export function validateMap(map) {
 /** Processes a GraphQL multipart request with file uploads. Supports batching per the spec. */
 export async function uploadProcess(request, contextValueInput, server, settings) {
     try {
+        // Multipart forms can bypass browser preflight and Apollo's executeOperation skips HTTP CSRF checks.
+        if (!request.headers.get('apollo-require-preflight')?.trim() &&
+            !request.headers.get('x-apollo-operation-name')?.trim()) {
+            return NextResponse.json({ errors: [{ message: 'Upload requests require an Apollo-Require-Preflight header.' }] }, { status: 400 });
+        }
         const settingsError = validateSettings(settings);
         if (settingsError) {
             return NextResponse.json({ errors: [{ message: settingsError }] }, { status: 400 });
         }
         const formData = await request.formData();
         const files = await extractFiles(formData);
+        const fileCount = Array.from(formData.values()).filter(value => value instanceof globalThis.File).length;
         const mapRaw = formData.get('map');
         const operationsRaw = formData.get('operations');
         if (!mapRaw || !operationsRaw || typeof mapRaw !== 'string' || typeof operationsRaw !== 'string') {
@@ -290,14 +303,38 @@ export async function uploadProcess(request, contextValueInput, server, settings
                 return NextResponse.json({ errors: [{ message: operationError }] }, { status: 400 });
             }
         }
-        // Check maxFiles limit.
-        if (settings?.maxFiles !== undefined && Object.keys(map).length > settings.maxFiles) {
+        const isBatch = Array.isArray(parsedOperations);
+        if (isBatch && parsedOperations.length === 0) {
+            return NextResponse.json({ errors: [{ message: 'Operations batch cannot be empty.' }] }, { status: 400 });
+        }
+        for (const paths of Object.values(map)) {
+            for (const filePath of paths) {
+                const segments = filePath.split('.');
+                const offset = isBatch ? 1 : 0;
+                if ((isBatch && (!/^(0|[1-9]\d*)$/.test(segments[0]) ||
+                    Number(segments[0]) >= parsedOperations.length)) ||
+                    segments[offset] !== 'variables' || segments.length <= offset + 1) {
+                    return NextResponse.json({ errors: [{ message: 'File paths must target operation variables.' }] }, { status: 400 });
+                }
+                let target = parsedOperations;
+                for (const segment of segments) {
+                    if (target === null || typeof target !== 'object' || !Object.hasOwn(target, segment)) {
+                        return NextResponse.json({ errors: [{ message: 'File paths must reference existing null placeholders.' }] }, { status: 400 });
+                    }
+                    target = target[segment];
+                }
+                if (target !== null) {
+                    return NextResponse.json({ errors: [{ message: 'File paths must reference existing null placeholders.' }] }, { status: 400 });
+                }
+            }
+        }
+        // Include unmapped files in the request limit.
+        if (settings?.maxFiles !== undefined && Math.max(Object.keys(map).length, fileCount) > settings.maxFiles) {
             return NextResponse.json({ errors: [{ message: `${settings.maxFiles} max file uploads exceeded.` }] }, { status: 413 });
         }
         // Normalize operations into a keyed object for path resolution.
         // Single: paths are "variables.file" → use the operation object directly.
         // Batch: paths are "0.variables.file" → use indices as keys in a wrapper object.
-        const isBatch = Array.isArray(parsedOperations);
         let operationsRoot;
         if (isBatch) {
             const batchOperations = parsedOperations;
@@ -354,12 +391,13 @@ export async function uploadProcess(request, contextValueInput, server, settings
             const sortedKeys = Object.keys(operationsRoot).sort((a, b) => Number(a) - Number(b));
             for (const key of sortedKeys) {
                 const op = operationsRoot[key];
-                const response = await server.executeOperation({ query: op.query, variables: op.variables || {} }, { contextValue: contextValueInput });
+                const response = await server.executeOperation({ query: op.query, variables: op.variables || {}, ...(op.operationName !== undefined && { operationName: op.operationName }) }, { contextValue: contextValueInput });
                 results.push(await collectResponse(response));
             }
             return NextResponse.json(results);
         }
-        const response = await server.executeOperation({ query: operationsRoot.query, variables: operationsRoot.variables }, { contextValue: contextValueInput });
+        const operation = operationsRoot;
+        const response = await server.executeOperation({ query: operation.query, variables: operation.variables || {}, ...(operation.operationName !== undefined && { operationName: operation.operationName }) }, { contextValue: contextValueInput });
         return NextResponse.json(await collectResponse(response));
     }
     catch (error) {
