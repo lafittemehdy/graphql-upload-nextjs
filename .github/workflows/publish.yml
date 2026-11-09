@@ -21,6 +21,10 @@ jobs:
           registry-url: https://registry.npmjs.org
       - run: npm install -g npm@12.2.2
       - run: node --version && npm --version
+      - name: Verify release tag matches package version
+        env:
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+        run: test "$RELEASE_TAG" = "v$(node -p "require('./package.json').version")"
       - run: npm ci
       - run: npm run build
       - run: npm test
