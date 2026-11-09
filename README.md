@@ -76,7 +76,7 @@ Successful responses wait for reception, file writes and MIME validation to fini
 
 All numeric streaming limits are inclusive, non-negative safe integers. A limit of zero allows zero bytes or files; it doesn't disable the limit. MiB means 1,048,576 bytes.
 
-The host still needs sufficient disk space, request timeouts, concurrency controls and process-crash recovery. A reverse proxy or hosting platform may buffer a request before the handler sees it, so check the full deployment path. This implementation requires Node.js and writable temporary storage; it doesn't support the Edge runtime.
+The host still needs sufficient disk space, request timeouts, concurrency controls and process-crash recovery. A reverse proxy or hosting platform may buffer a request before the handler sees it, or delay an early error response until the client finishes sending, so check the full deployment path. This implementation requires Node.js and writable temporary storage; it doesn't support the Edge runtime.
 
 ## Client requests and security
 
