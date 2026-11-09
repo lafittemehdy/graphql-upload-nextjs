@@ -7,18 +7,21 @@
     "url": "https://github.com/lafittemehdy/graphql-upload-nextjs/issues"
   },
   "dependencies": {
-    "file-type": "^22.2.0",
+    "busboy": "^1.6.0",
+    "file-type": "^22.3.0",
+    "fs-capacitor": "^8.0.0",
     "istextorbinary": "^9.5.0"
   },
   "description": "The middleware and Upload scalar in this package enable GraphQL multipart requests (file uploads via queries and mutations) in your Apollo Server Next.js integration.",
   "devDependencies": {
-    "@types/node": "^26.6.5",
-    "graphql": "^16.14.2",
+    "@types/busboy": "^1.5.5",
+    "@types/node": "^26.6.6",
+    "graphql": "^16.15.0",
     "husky": "^9.1.7",
-    "next": "^16.4.2",
+    "next": "^16.4.5",
     "typescript": "^7.0.2",
-    "undici": "^8.12.3",
-    "vitest": "^5.0.5"
+    "undici": "^8.12.4",
+    "vitest": "^5.1.0"
   },
   "files": [
     "CODE_OF_CONDUCT.md",
@@ -26,8 +29,12 @@
     "LICENSE",
     "README.md",
     "SECURITY.md",
+    "core.d.ts",
+    "core.js",
     "index.d.ts",
-    "index.js"
+    "index.js",
+    "streaming.d.ts",
+    "streaming.js"
   ],
   "engines": {
     "node": ">=22.13.0"
@@ -49,14 +56,14 @@
   "main": "index.js",
   "name": "graphql-upload-nextjs",
   "overrides": {
-    "postcss": "8.5.31",
-    "@graphql-tools/utils": "13.0.2",
-    "@fastify/busboy": "3.2.3",
-    "qs": "6.16.1",
+    "postcss": "8.5.32",
+    "@graphql-tools/utils": "13.2.1",
+    "@fastify/busboy": "3.2.5",
+    "qs": "6.17.1",
     "source-map-js": "1.2.2",
-    "body-parser": "2.3.0"
+    "body-parser": "2.4.0"
   },
-  "packageManager": "npm@12.2.0",
+  "packageManager": "npm@12.2.2",
   "peerDependencies": {
     "@apollo/server": "^5.0.0",
     "graphql": "^16.0.0",
@@ -73,9 +80,11 @@
   "scripts": {
     "build": "tsc",
     "dev": "tsc --watch",
-    "prepublishOnly": "npm run build && npm test",
+    "prepublishOnly": "npm run build && npm test && npm run test:types",
     "start": "tsc && node index.js",
     "test": "vitest run",
+    "test:types": "tsc --ignoreConfig --noEmit --strict --skipLibCheck --module NodeNext --moduleResolution NodeNext --target ES2022 tests/public-api.ts",
+    "test:integration": "node --test tests/next-http.test.mjs",
     "prepare": "husky || exit 0"
   },
   "type": "module",

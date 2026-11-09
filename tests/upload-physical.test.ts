@@ -1,3 +1,4 @@
+/** Verifies received file metadata and replayable content reads. */
 import { describe, expect, it } from 'vitest'
 import type { File as UploadFile, MinimalRequest } from '../src/index'
 import { Upload, streamToBuffer, uploadProcess } from '../src/index'

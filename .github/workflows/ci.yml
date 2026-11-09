@@ -39,6 +39,9 @@ jobs:
       - name: Test
         run: npm test
 
+      - name: Check consumer type compatibility
+        run: npm run test:types
+
       - name: Verify package contents
         run: npm pack --dry-run --json
 
@@ -79,6 +82,9 @@ jobs:
       - name: Lint example
         working-directory: examples/example-graphql-upload-nextjs
         run: npm run lint
+
+      - name: Test production HTTP uploads and disconnect cleanup
+        run: npm run test:integration
 
   ci-success:
     name: CI Success

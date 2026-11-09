@@ -1,3 +1,4 @@
+/** Verifies multipart operation selection with real Apollo and Web Requests. */
 import { ApolloServer } from '@apollo/server'
 import { expect, it } from 'vitest'
 import { GraphQLUpload, uploadProcess } from '../src/index'

@@ -1,3 +1,4 @@
+/** Configures the runnable Next.js upload example. */
 import path from "node:path";
 import type { NextConfig } from "next";
 

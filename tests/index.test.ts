@@ -1,3 +1,4 @@
+/** Specifies the legacy scalar, upload values, paths, and stream utilities. */
 import { describe, expect, it } from 'vitest'
 import {
     type File,

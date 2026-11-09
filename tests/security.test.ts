@@ -1,3 +1,4 @@
+/** Specifies preflight, mapping, MIME, and configuration trust boundaries. */
 import { describe, expect, it, vi } from 'vitest'
 import { uploadProcess } from '../src/index'
 

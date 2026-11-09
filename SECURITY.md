@@ -6,8 +6,8 @@ We provide security fixes exclusively for the latest major version.
 
 | Version | Supported |
 | --- | --- |
-| 2.x | Yes |
-| < 2.0 | No |
+| 3.x | Yes |
+| < 3.0 | No |
 
 ## Reporting a Vulnerability
 
