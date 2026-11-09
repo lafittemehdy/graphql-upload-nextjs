@@ -1,144 +1,21 @@
-import { randomUUID } from "node:crypto";
-import { createWriteStream } from "node:fs";
-import { mkdir } from "node:fs/promises";
-import path from "node:path";
-import { pipeline } from "node:stream";
-import { gql } from "@apollo/client";
-import { ApolloServer } from "@apollo/server";
-import { startServerAndCreateNextHandler } from "@as-integrations/next";
-import { type File, GraphQLUpload, uploadProcess } from "graphql-upload-nextjs";
+/** Demonstrates the backward-compatible buffered multipart endpoint. */
+import { uploadProcess } from "graphql-upload-nextjs";
 import type { NextRequest } from "next/server.js";
+import {
+  ALLOWED_TYPES,
+  contextHandler,
+  handler,
+  MAX_FILE_SIZE,
+  server,
+} from "../../../lib/graphql";
 
-/** Allowed MIME types for file uploads. */
-const ALLOWED_TYPES = ["image/jpeg", "image/png", "text/plain"];
-
-/** Maximum file size in bytes (10MB). */
-const MAX_FILE_SIZE = 10 * 1024 * 1024;
-
-const typeDefs = gql`
-  # Custom scalar type for handling file uploads.
-  scalar Upload
-  type File {
-    encoding: String!
-    filename: String!
-    fileSize: Int!
-    mimetype: String!
-    uri: String!
-  }
-  type Query {
-    default: Boolean!
-  }
-  type Mutation {
-    uploadFile(file: Upload!): File!
-    uploadFiles(files: [Upload!]!): [File!]!
-  }
-`;
-
-/** Response shape returned by file upload resolvers. */
-interface GraphQLFileResponse {
-  encoding: string;
-  filename: string;
-  fileSize: number;
-  mimetype: string;
-  uri: string;
-}
-
-/**
- * Validates, stores, and returns metadata for a single uploaded file.
- * Sanitizes the file name to prevent path traversal attacks.
- */
-async function processAndStoreFile(
-  fileData: File,
-): Promise<GraphQLFileResponse> {
-  const { createReadStream, encoding, fileSize, mimetype } = fileData;
-  const safeName = path.basename(fileData.filename);
-
-  if (!ALLOWED_TYPES.includes(mimetype)) {
-    throw new Error(`File type ${mimetype} is not allowed for ${safeName}.`);
-  }
-
-  if (fileSize > MAX_FILE_SIZE) {
-    throw new Error(`File ${safeName} size exceeds the limit of 10MB.`);
-  }
-
-  const extension =
-    mimetype === "image/jpeg"
-      ? "jpg"
-      : mimetype === "image/png"
-        ? "png"
-        : "txt";
-  const storedName = `${randomUUID()}.${extension}`;
-  await mkdir("./uploads", { recursive: true });
-
-  return new Promise<GraphQLFileResponse>((resolve, reject) => {
-    pipeline(
-      createReadStream(),
-      createWriteStream(`./uploads/${storedName}`, { flags: "wx" }),
-      (error) => {
-        if (error) {
-          reject(new Error(`Error during upload of ${safeName}.`));
-        } else {
-          resolve({
-            encoding,
-            filename: safeName,
-            fileSize,
-            mimetype,
-            uri: `/uploads/${storedName}`,
-          });
-        }
-      },
-    );
-  });
-}
-
-const resolvers = {
-  Mutation: {
-    uploadFile: async (
-      _parent: undefined,
-      { file }: { file: Promise<File> },
-      _context: Context,
-    ): Promise<GraphQLFileResponse> => {
-      return processAndStoreFile(await file);
-    },
-    uploadFiles: async (
-      _parent: undefined,
-      { files }: { files: Promise<File>[] },
-      _context: Context,
-    ): Promise<GraphQLFileResponse[]> => {
-      const resolvedFiles = await Promise.all(files);
-      return Promise.all(resolvedFiles.map(processAndStoreFile));
-    },
-  },
-  Query: {
-    default: async () => true,
-  },
-  Upload: GraphQLUpload,
-};
-
-const server = new ApolloServer({ resolvers, typeDefs });
-
-/** GraphQL request context with client IP and the original request. */
-interface Context {
-  ip: string;
-  req: NextRequest;
-  [key: string]: unknown;
-}
-
-/** Creates a GraphQL context with request metadata. */
-const contextHandler = async (req: NextRequest): Promise<Context> => {
-  const ip = req.headers.get("x-forwarded-for") || "";
-  return { ip, req };
-};
-
-const handler = startServerAndCreateNextHandler<NextRequest, Context>(server, {
-  context: contextHandler,
-});
-
-/** Routes requests to the appropriate handler based on content type. */
 const requestHandler = async (request: NextRequest) => {
   if (request.headers.get("content-type")?.includes("multipart/form-data")) {
-    const context = await contextHandler(request);
-    return await uploadProcess(request, context, server);
+    return uploadProcess(request, await contextHandler(request), server, {
+      allowedTypes: ALLOWED_TYPES,
+      maxFileSize: MAX_FILE_SIZE,
+      maxFiles: 10,
+    });
   }
   return handler(request);
 };

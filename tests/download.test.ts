@@ -1,3 +1,4 @@
+/** Checks the example download boundary and attachment headers. */
 import { mkdtemp, mkdir, writeFile, unlink, rmdir } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'

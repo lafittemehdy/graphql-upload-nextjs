@@ -1,3 +1,4 @@
+/** Specifies the existing buffered multipart processing contract. */
 import { describe, expect, it } from 'vitest'
 import type { MinimalRequest } from '../src/index'
 import { Upload, uploadProcess } from '../src/index'

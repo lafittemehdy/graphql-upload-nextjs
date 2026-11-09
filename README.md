@@ -1,326 +1,147 @@
 # graphql-upload-nextjs
 
-[![npm version](https://img.shields.io/npm/v/graphql-upload-nextjs.svg)](https://www.npmjs.com/package/graphql-upload-nextjs)
-[![CI](https://github.com/lafittemehdy/graphql-upload-nextjs/actions/workflows/ci.yml/badge.svg)](https://github.com/lafittemehdy/graphql-upload-nextjs/actions/workflows/ci.yml)
-[![license](https://img.shields.io/npm/l/graphql-upload-nextjs.svg)](https://github.com/lafittemehdy/graphql-upload-nextjs/blob/master/LICENSE)
-[![GraphQL multipart request spec](https://img.shields.io/badge/spec-graphql--multipart--request-blue)](https://github.com/jaydenseric/graphql-multipart-request-spec)
-[![Node.js](https://img.shields.io/badge/node-%3E%3D22.13-brightgreen)](https://nodejs.org)
-[![TypeScript](https://img.shields.io/badge/TypeScript-6-blue)](https://www.typescriptlang.org)
-
-A [GraphQL multipart request spec](https://github.com/jaydenseric/graphql-multipart-request-spec) implementation for [Next.js](https://nextjs.org) App Router with [Apollo Server](https://www.apollographql.com/docs/apollo-server). Enables file uploads via GraphQL mutations using the `Upload` scalar, with built-in MIME type verification via magic bytes.
-
-## Features
-
-- Implements the [GraphQL multipart request spec](https://github.com/jaydenseric/graphql-multipart-request-spec).
-- Designed for Next.js App Router route handlers.
-- Supports single file uploads, multiple file uploads, and operation batching.
-- File deduplication (one file mapped to multiple operation paths).
-- MIME type verified via magic bytes using [file-type](https://npm.im/file-type), not trusting client headers.
-- Unknown binary files fall back to `application/octet-stream` instead of the client-provided MIME type.
-- Configurable `allowedTypes`, `maxFileSize`, and `maxFiles`.
-- Only reads 4KB for MIME detection — streams the rest directly from `Blob`.
-- Spec-compatible property names: `filename`, `mimetype`, `encoding`, `createReadStream`.
+The `graphql-upload-nextjs` package supports the [GraphQL multipart request spec](https://github.com/jaydenseric/graphql-multipart-request-spec) for the Next.js App Router and Apollo Server. It has an `Upload` scalar, buffered uploads and an optional streaming API. The package declares Node.js 22.13+, Apollo Server 5, GraphQL 16 and Next.js 16 support. Check the engine requirements of your chosen dependency versions too, as they may require a newer Node.js patch release.
 
 ## Installation
 
-```bash
+Install the package and its integrations via npm:
+
+```sh
 npm install graphql-upload-nextjs @apollo/server @as-integrations/next graphql next
 ```
 
-## Migrating from graphql-upload
+## Choosing an upload API
 
-[graphql-upload](https://github.com/jaydenseric/graphql-upload) uses Express/Koa middleware that is incompatible with Next.js App Router route handlers. This package provides the same `Upload` scalar and file object interface for the Next.js environment.
+The package offers two upload APIs: `uploadProcess` and `uploadProcessStreaming`.
 
-Property names match the original: `filename`, `mimetype`, `encoding`, `createReadStream`. An additional `fileSize` property is also available.
+The `uploadProcess` API keeps the existing buffered calling contract and continues to expose file sizes as numbers. It waits for native `request.formData()` to consume the body, then starts resolver execution once the uploads have been received and prepared. Files can be read from the received `Blob` objects multiple times. The configured size and count limits are checked after body parsing, and the runtime manages the received file storage.
 
-**Before (graphql-upload with Express):**
-```typescript
-import graphqlUploadExpress from 'graphql-upload/graphqlUploadExpress.mjs'
-app.use(graphqlUploadExpress())
+The `uploadProcessStreaming` API is opt-in. It uses [Busboy](https://github.com/mscdex/busboy) to parse `request.body` incrementally, so resolver execution can start as soon as the `operations` and `map` fields have been validated. Each file can be read from private temporary storage whilst the upload is still in progress. Its `fileSize` property is a `Promise<number>`. Limits are enforced during reception, and the API requires a writable `os.tmpdir()` directory.
+
+Buffering is a perfectly legitimate option for small uploads when your upstream server enforces a suitable total request-body limit. Streaming is useful for larger uploads, concurrent traffic and processing files as you receive them. Next.js does provide access to a raw request-body stream, so buffering is an implementation choice rather than an inevitable App Router limitation.
+
+Both APIs support individual files, nested variable paths, file lists, operation batching, deduplication, `operationName` and the same `GraphQLUpload` scalar. MIME detection looks at up to 4,100 bytes and ignores the MIME type provided by the client. Unrecognised binary contents fall back to `application/octet-stream`, and text-like contents to `text/plain`. The detection is heuristic: it doesn't guarantee that a file is safe or well formed.
+
+## Buffered uploads and existing usage
+
+Existing consumers can keep their imports, handler calls, resolver types and numeric `fileSize` values. Define `scalar Upload` in the GraphQL schema and register `Upload: GraphQLUpload` in the resolvers. Valid buffered requests retain their behaviour; the stricter handling of malformed or ambiguous inputs is described under [Public API compatibility](#public-api-compatibility).
+
+In a Next.js route, create an `ApolloServer` instance with your app's schema and resolvers. Create a context function using the `NextRequest`, then initialise the Apollo handler with `startServerAndCreateNextHandler`. In the `POST` handler, pass multipart requests, the resolved context, the server and any settings to `uploadProcess`. Otherwise, pass the request to the normal Apollo handler.
+
+For instance, you might allow `image/jpeg`, `image/png` and `text/plain`, set `maxFileSize` to 10 MiB and `maxFiles` to 10. The [buffered example route](examples/example-graphql-upload-nextjs/src/app/api/graphql/route.ts) shows the handler, and the [shared schema and resolvers](examples/example-graphql-upload-nextjs/src/lib/graphql.ts) show the integration.
+
+In a buffered resolver, `await file` gives you a `File` with `filename`, `encoding`, `mimetype`, a numeric `fileSize` and `createReadStream()`. Await the full stream pipeline before returning from the resolver.
+
+### Buffered settings
+
+- `allowedTypes` defaults to unrestricted. It accepts an array of non-empty MIME strings and compares them against the detected MIME type. An empty array allows no mapped file types.
+- `maxFileSize` defaults to unrestricted and accepts a finite, non-negative byte limit.
+- `maxFiles` defaults to unrestricted and accepts a non-negative safe integer. It limits the number of mapped file entries and the number of physical file parts separately; those counts aren't added together. Unmapped file parts still count towards the physical-file limit.
+
+**These settings don't cap the resources consumed by `request.formData()`.** You'll need an enforced body-size limit before the handler, along with request timeouts and concurrency limits appropriate to your host. Simply checking `Content-Length` won't enforce a limit for streamed requests or a dishonest client.
+
+## Opt-in streaming
+
+Use `uploadProcessStreaming` only on endpoints whose resolvers follow the streaming contract. Existing buffered endpoints won't automatically switch over.
+
+In a streaming Next.js route, set `export const runtime = 'nodejs'` and pass the request, resolved context, server and streaming settings to `uploadProcessStreaming`. For instance, you might allow `image/jpeg`, `image/png` and `text/plain`, with `maxFieldSize` of 1 MiB, `maxFileSize` of 10 MiB, `maxFiles` of 10 and `maxRequestSize` of 100 MiB. See the [streaming example route](examples/example-graphql-upload-nextjs/src/app/api/graphql-streaming/route.ts).
+
+The request must expose an unread, unlocked `body` stream and a multipart `Content-Type`. Native Next.js requests also provide an abort `signal` so the library can cancel work when a disconnect is reported. Adapters that only expose `formData()` should continue using the buffered API.
+
+### Streaming resolver contract
+
+The resolver receives a `Promise<StreamingFile>`. Await it to get the upload, then pass `upload.createReadStream()` and your app's writable destination to Node.js's stream pipeline. Await the pipeline, then `upload.fileSize` for the final byte count. You can then return the filename, file size and MIME type.
+
+The destination must be an application-owned writable stream. The [runnable storage example](examples/example-graphql-upload-nextjs/src/lib/storeUpload.ts) uses random identifiers with MIME-based extensions and exclusive writes. If writing or processing that file fails, it attempts to remove that destination. It doesn't roll back other files that have already been stored successfully.
+
+A few details matter when writing a streaming resolver:
+
+- The upload promise resolves once the bounded MIME detection prefix is available. Small files may already have finished reception by then.
+- Each call to `createReadStream()` starts at byte zero and reads independently, even when one physical file is mapped to several variables or batch operations.
+- The `fileSize` promise resolves once the full file has been received and written to temporary storage. Reception failure or cancellation rejects it if it hasn't already settled.
+- Create and finish all readers during resolver execution. Cleanup closes outstanding readers, and new streams are rejected once handler cleanup has started. On normal completion, temporary storage is released before the handler returns.
+- Calling `upload.abort()` cancels the **entire multipart request**, including other uploads and aliases. Destroying an individual reader only stops that reader.
+
+GraphQL execution can start before later file parts have been validated. A late limit violation, malformed part or disconnect can't roll back database changes or other external side effects. Your app has to deal with partial writes and define its own commit/rollback policy.
+
+Successful responses wait for reception, file writes and MIME validation to finish. The API streams incoming files but keeps the existing JSON response envelope. Apollo incremental results are accumulated into that envelope rather than streamed over HTTP.
+
+### Streaming settings
+
+- `allowedTypes` defaults to unrestricted and uses the same detected MIME allow-list as the buffered API.
+- `maxFieldSize` defaults to 1 MiB and applies separately to each `operations` or `map` field.
+- `maxFileSize` defaults to 10 MiB and applies to every received file, including unmapped files.
+- `maxFiles` defaults to 10. It separately limits mapped entries and received physical file parts, as in the buffered API.
+- `maxRequestSize` defaults to 100 MiB and caps actual received body bytes, including fields, multipart framing and ignored parts.
+
+All numeric streaming limits are inclusive, non-negative safe integers. A limit of zero allows zero bytes or files; it doesn't disable the limit. MiB means 1,048,576 bytes.
+
+The host still needs sufficient disk space, request timeouts, concurrency controls and process-crash recovery. A reverse proxy or hosting platform may buffer a request before the handler sees it, or delay an early error response until the client finishes sending, so check the full deployment path. This implementation requires Node.js and writable temporary storage; it doesn't support the Edge runtime.
+
+## Client requests and security
+
+Both upload APIs require a non-empty `Apollo-Require-Preflight` or `X-Apollo-Operation-Name` header before reading the body. Set this header on your upload client:
+
+```ts
+headers: { 'Apollo-Require-Preflight': 'true' }
 ```
 
-**After (graphql-upload-nextjs with App Router):**
-```typescript
-import { GraphQLUpload, uploadProcess } from 'graphql-upload-nextjs'
+Use an upload-aware GraphQL transport such as [apollo-upload-client](https://github.com/jaydenseric/apollo-upload-client). Keep your CORS allow-list restricted to origins you trust. The preflight requirement isn't authentication; authentication, authorisation and quotas remain your app's responsibility. Apply the same auth and context policies to JSON and multipart routes. Direct Apollo execution doesn't invoke a separate HTTP adapter's context callback.
 
-// In your route handler:
-if (request.headers.get("content-type")?.includes("multipart/form-data")) {
-    return await uploadProcess(request, context, server);
-}
-```
+Map paths must point to existing `null` placeholders within operation variables. For batched requests, each path starts with the operation index. A single physical file can map to several paths, but different file fields can't compete for the same placeholder. The parser rejects dangerous prototype keys in paths, duplicate physical file field names and duplicate control fields. Identical file contents are allowed. Missing files reject their associated upload promises.
 
-Resolver code stays the same — `filename`, `mimetype`, `encoding`, and `createReadStream` work identically.
+The streaming parser requires `operations` first, then `map`, then uniquely named file fields. It rejects extra control fields. The buffered API retains its more flexible field-order handling, though clients following the multipart specification should always use the specified order. `FormData.entries()` exposes entry order, so buffered ordering validation is possible; strict ordering is deliberately confined to the opt-in parser for backwards compatibility.
 
-## Usage
+Malformed requests return 400, and configured size or count limit violations return 413. Streaming disconnects return 499 when a response can still be delivered. GraphQL execution errors keep Apollo's result envelope. Unexpected exceptions caught during upload processing return a generic 500 without exposing the exception details.
 
-### Schema and Resolvers
+Store uploaded files outside public directories, sanitise display filenames and use server-generated storage keys. MIME sniffing isn't malware scanning or authorisation. The example download endpoint is for development: add authentication and ownership checks before serving private uploads in production.
 
-```typescript
-import path from 'node:path'
-import { randomUUID } from 'node:crypto'
-import { createWriteStream } from 'node:fs'
-import { pipeline } from 'node:stream'
-import { gql } from '@apollo/client' // Optional: syntax highlighting only.
-import { ApolloServer } from '@apollo/server'
-import { startServerAndCreateNextHandler } from '@as-integrations/next'
-import { type File, GraphQLUpload, uploadProcess } from 'graphql-upload-nextjs'
-import type { NextRequest } from 'next/server.js'
+## Public API compatibility
 
-const typeDefs = gql`
-    scalar Upload
-    type File {
-        encoding: String!
-        filename: String!
-        fileSize: Int!
-        mimetype: String!
-        uri: String!
-    }
-    type Query {
-        default: Boolean!
-    }
-    type Mutation {
-        uploadFile(file: Upload!): File!
-        uploadFiles(files: [Upload!]!): [File!]!
-    }
-`
+The existing exports are still there: `File`, `FileStream`, `FormDataFile`, `MinimalRequest`, `GraphQLUpload`, `Upload`, `uploadProcess`, `bufferToStream`, `parseOperationsJSON`, `sanitizeAndValidateJSON`, `setValueAtPath`, `streamToBuffer` and `validateMap`. `Upload` now accepts an optional file type parameter; its default is still `File`.
 
-interface FileResponse {
-    encoding: string;
-    filename: string;
-    fileSize: number;
-    mimetype: string;
-    uri: string;
-}
+The new exports are `StreamingFile`, `StreamingRequest`, `StreamingUploadSettings` and `uploadProcessStreaming`. Existing buffered callers don't need these new types. Valid buffered requests retain their behaviour. Ambiguous duplicate inputs are now rejected, numeric JSON object keys preserve their sibling properties, malformed body syntax produces a client error, and unexpected server exception details are no longer exposed.
 
-const resolvers = {
-    Mutation: {
-        uploadFile: async (
-            _parent: undefined,
-            { file }: { file: Promise<File> },
-        ): Promise<FileResponse> => {
-            const { createReadStream, encoding, filename, fileSize, mimetype } = await file;
-            const safeName = path.basename(filename);
-            const storedName = randomUUID();
-            return new Promise((resolve, reject) => {
-                pipeline(
-                    createReadStream(),
-                    createWriteStream(`./uploads/${storedName}`, { flags: "wx" }),
-                    (error) => {
-                        if (error) reject(new Error("Error during file upload."));
-                        else resolve({ encoding, filename: safeName, fileSize, mimetype, uri: `/${storedName}` });
-                    },
-                );
-            });
-        },
-        uploadFiles: async (
-            _parent: undefined,
-            { files }: { files: Promise<File>[] },
-        ): Promise<FileResponse[]> => {
-            const resolvedFiles = await Promise.all(files);
-            return Promise.all(resolvedFiles.map(async ({ createReadStream, encoding, filename, fileSize, mimetype }) => {
-                const safeName = path.basename(filename);
-                const storedName = randomUUID();
-                return new Promise<FileResponse>((resolve, reject) => {
-                    pipeline(
-                        createReadStream(),
-                        createWriteStream(`./uploads/${storedName}`, { flags: "wx" }),
-                        (error) => {
-                            if (error) reject(new Error(`Error during upload of ${safeName}.`));
-                            else resolve({ encoding, filename: safeName, fileSize, mimetype, uri: `/${storedName}` });
-                        },
-                    );
-                });
-            }));
-        },
-    },
-    Query: { default: async () => true },
-    Upload: GraphQLUpload,
-}
-```
+## Examples and verification
 
-> **Security:** Always sanitize filenames with `path.basename()` to prevent path traversal attacks. Never write uploaded files to publicly accessible directories in production.
+The [example project](examples/example-graphql-upload-nextjs/) has two endpoints: `/api/graphql` takes buffered uploads, and `/api/graphql-streaming` takes streamed ones. Both share the same schema and storage implementation.
 
-### Route Handler
+From the repository root, build and check the package:
 
-```typescript
-const server = new ApolloServer({ resolvers, typeDefs });
-
-const handler = startServerAndCreateNextHandler<NextRequest>(server, {
-    context: async (req: NextRequest) => ({
-        ip: req.headers.get("x-forwarded-for") || "",
-        req,
-    }),
-});
-
-const requestHandler = async (request: NextRequest) => {
-    if (request.headers.get("content-type")?.includes("multipart/form-data")) {
-        const context = { ip: request.headers.get("x-forwarded-for") || "", req: request };
-        return await uploadProcess(request, context, server);
-    }
-    return handler(request);
-};
-
-export const GET = requestHandler;
-export const POST = requestHandler;
-export const OPTIONS = requestHandler;
-```
-
-### Configuration
-
-```typescript
-await uploadProcess(request, context, server, {
-    allowedTypes: ["image/jpeg", "image/png", "text/plain"],
-    maxFileSize: 10 * 1024 * 1024, // 10MB
-    maxFiles: 10,
-});
-```
-
-| Option | Type | Default | Description |
-|---|---|---|---|
-| `allowedTypes` | `string[]` | `undefined` | Restrict MIME types. Checked against the detected MIME type; unknown binary files are `application/octet-stream`. |
-| `maxFileSize` | `number` | `undefined` | Max file size in bytes. Must be finite and non-negative. Returns 413 if exceeded. |
-| `maxFiles` | `number` | `undefined` | Max files per request, including unmapped files. Must be a non-negative safe integer. Returns 413 if exceeded. |
-
-### Client Usage
-
-Multipart requests must send `Apollo-Require-Preflight: true` (or a non-empty `X-Apollo-Operation-Name` header). Configure your upload link with `headers: { "Apollo-Require-Preflight": "true" }`. This forces browser preflight and protects the direct execution path from cross-site form submissions. Only allow trusted origins in your CORS policy.
-
-Map paths must target existing `null` placeholders inside operation variables. Single and batched requests preserve `operationName`.
-
-When using a GraphQL client library ([apollo-upload-client](https://npm.im/apollo-upload-client), [urql](https://npm.im/@urql/exchange-multipart-fetch), [extract-files](https://npm.im/extract-files)), file uploads are constructed automatically per the spec.
-
-```typescript
-import { gql, useMutation } from '@apollo/client';
-
-const UPLOAD = gql`
-  mutation UploadFile($file: Upload!) {
-    uploadFile(file: $file) { filename mimetype fileSize }
-  }
-`;
-
-function Uploader() {
-  const [upload] = useMutation(UPLOAD);
-  return <input type="file" onChange={(e) => {
-    const file = e.target.files?.[0];
-    if (file) upload({ variables: { file } });
-  }} />;
-}
-```
-
-## API Reference
-
-### Core Exports
-
-| Export | Type | Description |
-|---|---|---|
-| `GraphQLUpload` | `GraphQLScalarType` | The `Upload` scalar for your GraphQL schema. |
-| `uploadProcess` | `function` | Processes a multipart request with file uploads. |
-| `Upload` | `class` | Holds a promise that resolves with file upload details. |
-
-### File Object
-
-The resolved file object passed to resolvers:
-
-| Property | Type | Description |
-|---|---|---|
-| `createReadStream` | `() => ReadableStream` | Creates a Node.js readable stream of the file contents. Replayable. |
-| `encoding` | `string` | Transfer encoding (always `'binary'` with FormData API). |
-| `filename` | `string` | Original file name from the client. |
-| `fileSize` | `number` | File size in bytes. |
-| `mimetype` | `string` | MIME type verified via magic bytes. |
-
-### Utility Exports
-
-| Export | Type | Description |
-|---|---|---|
-| `bufferToStream` | `(buffer: Buffer) => ReadableStream` | Converts a Buffer to a Node.js readable stream. |
-| `parseOperationsJSON` | `(input: string) => object \| object[]` | Parses the operations field (object or array for batching). |
-| `sanitizeAndValidateJSON` | `(input: string) => object` | Parses JSON and validates it's a non-null, non-array object. |
-| `setValueAtPath` | `(obj, path, value) => void` | Sets a value at a dot-notation path in a nested object. |
-| `streamToBuffer` | `(stream: ReadableStream) => Promise<Buffer>` | Collects a readable stream into a Buffer. |
-| `validateMap` | `(map: object) => string \| null` | Validates map entries are arrays of string paths. Returns error or null. |
-
-### TypeScript Interfaces
-
-| Export | Description |
-|---|---|
-| `File` | Resolved file object with `filename`, `mimetype`, `encoding`, `fileSize`, `createReadStream`. |
-| `FileStream` | FormData file entry with a `stream()` method. |
-| `FormDataFile` | Raw file entry from multipart FormData. |
-| `MinimalRequest` | Request interface compatible with Next.js and Web API. |
-
-## Spec Compliance
-
-Implements the [GraphQL multipart request specification](https://github.com/jaydenseric/graphql-multipart-request-spec) by [jaydenseric](https://github.com/jaydenseric).
-
-The spec defines a [multipart form field structure](https://github.com/jaydenseric/graphql-multipart-request-spec#multipart-form-field-structure) with three ordered fields (`operations`, `map`, file fields) and enables nesting files anywhere within operations, operation batching, file deduplication, and file upload streams in resolvers.
-
-### Supported Capabilities
-
-| Spec Capability | Status | Details |
-|---|---|---|
-| `operations` field ([JSON-encoded GraphQL operation](https://github.com/jaydenseric/graphql-multipart-request-spec#multipart-form-field-structure)) | Supported | Parsed and validated as object or array. |
-| `map` field ([file-to-path mapping](https://github.com/jaydenseric/graphql-multipart-request-spec#multipart-form-field-structure)) | Supported | Validated: each entry must be an array of string paths. |
-| [Single file upload](https://github.com/jaydenseric/graphql-multipart-request-spec#single-file) | Supported | File mapped via `"variables.file"` path. |
-| [File list upload](https://github.com/jaydenseric/graphql-multipart-request-spec#file-list) | Supported | Files mapped via `"variables.files.0"`, `"variables.files.1"`, etc. |
-| [Batching](https://github.com/jaydenseric/graphql-multipart-request-spec#batching) | Supported | Operations as array, paths prefixed with operation index (`"0.variables.file"`). |
-| File deduplication | Supported | One file field mapped to multiple operation paths. |
-| [`object-path`](https://npm.im/object-path) dot-notation | Supported | Handles nested objects and array indices. |
-| File upload streams in resolvers | Supported | `createReadStream()` returns a Node.js readable stream. |
-| Missing file → rejected promise | Supported | Upload promise rejected with `"File missing in the request."` |
-| `maxFiles` / `maxFileSize` limits | Supported | Returns HTTP 413 when exceeded. |
-
-### Additions Beyond the Spec
-
-| Feature | Description |
-|---|---|
-| MIME magic byte verification | Real file type detected via [file-type](https://npm.im/file-type), not trusting client-provided `Content-Type`. |
-| `allowedTypes` filtering | Server-side restriction of accepted MIME types. |
-| Unknown binary fallback | Files with no recognized magic bytes and non-text contents are reported as `application/octet-stream`. |
-| `fileSize` property | File size in bytes available on the resolved file object. |
-
-### Limitations
-
-These are inherent trade-offs of using the Web `FormData` API for Next.js App Router compatibility. They do not affect normal spec usage.
-
-| Limitation | Reason |
-|---|---|
-| **No field ordering validation** | The [spec requires](https://github.com/jaydenseric/graphql-multipart-request-spec#multipart-form-field-structure) `operations` → `map` → files ordering. The Web `FormData` API retrieves fields by name (`formData.get('operations')`), not by position, so ordering cannot be validated. In practice, all major client libraries ([apollo-upload-client](https://npm.im/apollo-upload-client), [extract-files](https://npm.im/extract-files)) send fields in the correct order. |
-| **No `maxFieldSize`** | The original [graphql-upload](https://github.com/jaydenseric/graphql-upload) limits non-file field sizes via `busboy`. Next.js parses the full request body into `FormData` before our code runs, so field size limiting is not possible at this layer. |
-| **`encoding` is always `'binary'`** | `FormData` does not expose the transfer encoding of file parts. The original `graphql-upload` reads this from `busboy`'s stream events. In practice, transfer encoding is rarely used by resolvers. |
-| **No mid-stream abort** | The original uses `fs-capacitor` to buffer uploads to disk, allowing resolvers to abort an in-progress upload. With `FormData`, the entire request body is already parsed by the runtime. However, resolvers can still choose not to call `createReadStream()` to skip processing. |
-| **`Blob.stream()` instead of `busboy` streaming** | Next.js route handlers receive a `Request` object (Web API), not a Node.js `IncomingMessage`. There is no access to the raw request stream. `Blob.stream()` provides a replayable readable stream per file. |
-
-## Example
-
-A full example project is available at [`examples/example-graphql-upload-nextjs/`](examples/example-graphql-upload-nextjs/).
-
-## Contributing
-
-Contributions are welcome! To get started:
-
-```bash
-git clone https://github.com/lafittemehdy/graphql-upload-nextjs.git
-cd graphql-upload-nextjs
-npm install
+```sh
+npm ci
 npm run build
 npm test
+npm run test:types
 ```
 
-CI runs automatically on push and pull requests via GitHub Actions (build + test on Node.js 22/24, example build + lint).
+Then build and check the example, return to the root and run the production HTTP tests:
 
-Please read [CONTRIBUTING.md](CONTRIBUTING.md) and [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md) before opening a pull request.
+```sh
+cd examples/example-graphql-upload-nextjs
+npm ci
+npm run build
+npm run lint
+cd ../..
+npm run test:integration
+```
 
-## Security
+`npm test` runs unit and integration tests using real Web Requests and Apollo. They cover early reads before upload completion, exact byte boundaries, batching, deduplication, malformed inputs, cancellation, temporary-storage failures and cleanup.
 
-Please read [SECURITY.md](SECURITY.md) before reporting security-sensitive issues.
+`npm run test:types` compiles the legacy consumer contracts against the package's generated declarations. `npm run test:integration` launches a temporary Next.js production server, checks both endpoints and downloads, proves early destination writes over HTTP and verifies cleanup on disconnect. It then stops its test server. CI runs package tests on Node.js 22, 24 and 26, and the production example checks on Node.js 24.
 
-## License
+### Known verification limits
 
-MIT. See [LICENSE](https://github.com/lafittemehdy/graphql-upload-nextjs/blob/master/LICENSE).
+For synthetic server requests, encode client `FormData` first or provide an explicit byte stream. Node.js 24.22.1's bundled native `FormData` encoder can emit an unhandled error if its generated body is cancelled, reproducible without this package. That reproducer uses a synthetic outgoing body, whereas incoming Next.js HTTP bodies are covered by the production tests. The test runner still treats unhandled errors as failures.
 
-## Acknowledgements
+The source build type-checks the package's TypeScript. The consumer type check verifies the generated public API with `skipLibCheck` enabled, matching the example's Next.js configuration. A full transitive declaration check currently reports errors in Next.js's bundled declarations and missing ambient React types. Those errors also reproduce when importing `next/server.js` alone, so that check isn't claimed to pass.
 
-Sincere gratitude to [jaydenseric](https://github.com/jaydenseric) for the [GraphQL multipart request specification](https://github.com/jaydenseric/graphql-multipart-request-spec) and [graphql-upload](https://github.com/jaydenseric/graphql-upload), and to [meabed](https://github.com/meabed) for [graphql-upload-ts](https://github.com/meabed/graphql-upload-ts) which served as a valuable reference.
+For further project information, see [CONTRIBUTING.md](CONTRIBUTING.md), [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md) and [SECURITY.md](SECURITY.md).
 
-Finally, heartfelt gratitude to my mom for her unwavering support, which has allowed me to dedicate my time to working on open-source software.
+## Licence and acknowledgements
+
+This project is licensed under the MIT Licence. See [LICENSE](LICENSE) for the licence text.
+
+Thanks to [jaydenseric](https://github.com/jaydenseric) for the GraphQL multipart request spec and [graphql-upload](https://github.com/jaydenseric/graphql-upload), which uses Busboy and fs-capacitor for its streaming architecture. Thanks also to [meabed](https://github.com/meabed) for [graphql-upload-ts](https://github.com/meabed/graphql-upload-ts), a very useful reference.
+
+Finally, a very sincere thanks to my Mum for her ongoing support, which has enabled me to devote my time to open source.

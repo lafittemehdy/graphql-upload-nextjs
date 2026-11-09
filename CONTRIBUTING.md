@@ -7,9 +7,10 @@ Thank you for dedicating time to improve `graphql-upload-nextjs`.
 Initialize, build, and test the core package:
 
 ```bash
-npm install
+npm ci
 npm run build
 npm test
+npm run test:types
 
 ```
 
@@ -17,9 +18,11 @@ Verify the example application independently:
 
 ```bash
 cd examples/example-graphql-upload-nextjs
-npm install
+npm ci
 npm run build
 npm run lint
+cd ../..
+npm run test:integration
 
 ```
 

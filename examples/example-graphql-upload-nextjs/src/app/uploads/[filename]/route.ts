@@ -1,3 +1,4 @@
+/** Serves example uploads through a constrained attachment download route. */
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 
