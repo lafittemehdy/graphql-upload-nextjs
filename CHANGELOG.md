@@ -1,5 +1,11 @@
 # Changelog
 
+## 3.1.4 - 2026-11-14
+
+- Restrict `setValueAtPath` to own containers so inherited objects and arrays are never mutated as a side effect.
+- Preserve existing own-property path behavior and express forbidden prototype keys directly for static verification.
+- Add object and array inheritance regression tests.
+
 ## 3.1.3 - 2026-11-14
 
 - Document the current Apollo Server transitive dependency advisory and application-root mitigation.

@@ -250,13 +250,14 @@ export function setValueAtPath(obj: Record<string, unknown>, path: string, value
     for (let i = 0; i < keys.length - 1; i++) {
         const key = keys[i]
 
-        if (BLOCKED_KEYS.has(key)) {
+        if (key === '__proto__' || key === 'constructor' || key === 'prototype') {
             throw new Error(`Invalid path segment: '${key}' is not allowed.`)
         }
 
         const nextKeyIsArrayIndex = /^\d+$/.test(keys[i + 1])
 
         if (
+            !Object.hasOwn(current, key) ||
             !current[key] ||
             typeof current[key] !== 'object' ||
             (nextKeyIsArrayIndex && !Array.isArray(current[key])) ||
@@ -269,7 +270,7 @@ export function setValueAtPath(obj: Record<string, unknown>, path: string, value
     }
 
     const finalKey = keys[keys.length - 1]
-    if (BLOCKED_KEYS.has(finalKey)) {
+    if (finalKey === '__proto__' || finalKey === 'constructor' || finalKey === 'prototype') {
         throw new Error(`Invalid path segment: '${finalKey}' is not allowed.`)
     }
     current[finalKey] = value

@@ -78,6 +78,24 @@ describe('parseOperationsJSON', () => {
 })
 
 describe('setValueAtPath', () => {
+    it('creates an own object instead of mutating an inherited container', () => {
+        const inherited = { shared: { preserved: true } }
+        const target: Record<string, unknown> = Object.create(inherited)
+        setValueAtPath(target, 'shared.marker', 'own')
+        expect(inherited.shared).toEqual({ preserved: true })
+        expect(Object.hasOwn(target, 'shared')).toBe(true)
+        expect(target.shared).toEqual({ marker: 'own' })
+    })
+
+    it('creates an own array instead of mutating an inherited array', () => {
+        const inherited = { files: ['prototype'] }
+        const target: Record<string, unknown> = Object.create(inherited)
+        setValueAtPath(target, 'files.0', 'own')
+        expect(inherited.files).toEqual(['prototype'])
+        expect(Object.hasOwn(target, 'files')).toBe(true)
+        expect(target.files).toEqual(['own'])
+    })
+
     it('sets a value at a simple root key', () => {
         const obj: Record<string, unknown> = {}
         setValueAtPath(obj, 'key', 'value')

@@ -114,6 +114,8 @@ For pnpm, put the same selector under `overrides` in your root pnpm-workspace.ya
 
 ## Public API compatibility
 
+`setValueAtPath` creates an own container when a path encounters an inherited property. Existing own-property object and array paths retain their behavior; inherited containers are not mutated.
+
 The existing exports are still there: `File`, `FileStream`, `FormDataFile`, `MinimalRequest`, `GraphQLUpload`, `Upload`, `uploadProcess`, `bufferToStream`, `parseOperationsJSON`, `sanitizeAndValidateJSON`, `setValueAtPath`, `streamToBuffer` and `validateMap`. `Upload` now accepts an optional file type parameter; its default is still `File`.
 
 The new exports are `StreamingFile`, `StreamingRequest`, `StreamingUploadSettings` and `uploadProcessStreaming`. Existing buffered callers don't need these new types. Valid buffered requests retain their behaviour. Ambiguous duplicate inputs are now rejected, numeric JSON object keys preserve their sibling properties, malformed body syntax produces a client error, and unexpected server exception details are no longer exposed.
