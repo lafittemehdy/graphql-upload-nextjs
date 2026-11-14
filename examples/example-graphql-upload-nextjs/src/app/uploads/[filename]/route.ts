@@ -21,6 +21,7 @@ export async function GET(
         : "text/plain";
     return new Response(new Uint8Array(content), {
       headers: {
+        "Cache-Control": "private, no-store",
         "Content-Type": type,
         "Content-Disposition": `attachment; filename="${filename}"`,
         "X-Content-Type-Options": "nosniff",

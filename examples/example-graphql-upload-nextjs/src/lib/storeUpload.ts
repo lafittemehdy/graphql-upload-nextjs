@@ -31,9 +31,9 @@ export async function processAndStoreFile(
         : "txt";
   const storedName = `${randomUUID()}.${extension}`;
   const directory = path.join(process.cwd(), "uploads");
-  await mkdir(directory, { recursive: true });
+  await mkdir(directory, { recursive: true, mode: 0o700 });
   const destination = path.join(directory, storedName);
-  const handle = await open(destination, "wx");
+  const handle = await open(destination, "wx", 0o600);
   try {
     await pipeline(file.createReadStream(), handle.createWriteStream());
     const fileSize = await file.fileSize;

@@ -96,6 +96,22 @@ Malformed requests return 400, and configured size or count limit violations ret
 
 Store uploaded files outside public directories, sanitise display filenames and use server-generated storage keys. MIME sniffing isn't malware scanning or authorisation. The example download endpoint is for development: add authentication and ownership checks before serving private uploads in production.
 
+### Apollo Server dependency advisory
+
+As of 2026-11-14, Apollo Server 5.5.2 restricts its transitive GraphQL Tools dependencies to versions affected by [GHSA-c4qx-w738-7hr3](https://github.com/advisories/GHSA-c4qx-w738-7hr3). This concerns merging untrusted incremental GraphQL results; it is separate from this package's multipart path validation.
+
+Until Apollo publishes compatible patched dependency ranges, apply the following override in **your application's root** package.json, reinstall, and run your application's tests and audit:
+
+```json
+{
+  "overrides": {
+    "@graphql-tools/utils@>=10.10.1 <12.0.2": "12.0.2"
+  }
+}
+```
+
+For pnpm, put the same selector under `overrides` in your root pnpm-workspace.yaml. Dependency packages cannot enforce overrides on their consumers. The repository and example apply patched overrides, and the packed Apollo consumer is tested separately. Remove the application override when your upstream dependency graph resolves patched versions itself.
+
 ## Public API compatibility
 
 The existing exports are still there: `File`, `FileStream`, `FormDataFile`, `MinimalRequest`, `GraphQLUpload`, `Upload`, `uploadProcess`, `bufferToStream`, `parseOperationsJSON`, `sanitizeAndValidateJSON`, `setValueAtPath`, `streamToBuffer` and `validateMap`. `Upload` now accepts an optional file type parameter; its default is still `File`.

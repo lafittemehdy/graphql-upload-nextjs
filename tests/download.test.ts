@@ -28,6 +28,7 @@ it('serves uploaded content as an attachment with a safe content type', async ()
     expect(response.headers.get('content-type')).toBe('text/plain')
     expect(response.headers.get('content-disposition')).toContain('attachment')
     expect(response.headers.get('x-content-type-options')).toBe('nosniff')
+    expect(response.headers.get('cache-control')).toBe('private, no-store')
     expect(await response.text()).toBe('<script>example</script>')
 })
 it.each(['../package.json', 'file.html', '00000000-0000-0000-0000-000000000000.txt'])('does not expose invalid or absent file %s', async requested => {

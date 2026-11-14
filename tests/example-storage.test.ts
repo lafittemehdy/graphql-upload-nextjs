@@ -1,5 +1,5 @@
 /** Verifies example persistence keeps numeric metadata and never leaves partially written files. */
-import { mkdtemp, readFile, readdir, rmdir, unlink } from 'node:fs/promises'
+import { mkdtemp, readFile, readdir, rmdir, stat, unlink } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { Readable } from 'node:stream'
@@ -35,5 +35,9 @@ it('stores a completed stream and awaits its final size', async () => {
     expect(result.fileSize).toBe(5)
     const saved = path.join(directory, 'uploads', path.basename(result.uri))
     expect(await readFile(saved, 'utf8')).toBe('hello')
+    if (process.platform !== 'win32') {
+        expect((await stat(saved)).mode & 0o777).toBe(0o600)
+        expect((await stat(path.dirname(saved))).mode & 0o777).toBe(0o700)
+    }
     await unlink(saved)
 })

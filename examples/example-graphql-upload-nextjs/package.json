@@ -3,8 +3,8 @@
   "version": "1.0.0",
   "private": true,
   "overrides": {
-    "postcss": "8.5.32",
-    "@graphql-tools/utils": "13.2.1",
+    "postcss": "8.5.33",
+    "@graphql-tools/utils": "13.2.2",
     "@fastify/busboy": "3.2.5",
     "qs": "6.17.1",
     "body-parser": "2.4.0",
@@ -20,16 +20,16 @@
   },
   "dependencies": {
     "@apollo/client": "^4.3.8",
-    "@apollo/server": "^5.5.1",
+    "@apollo/server": "^5.5.2",
     "@as-integrations/next": "^4.1.0",
     "graphql": "^16.15.0",
     "graphql-upload-nextjs": "file:../..",
-    "next": "16.4.5",
+    "next": "16.4.6",
     "react": "19.3.1",
     "react-dom": "19.3.1"
   },
   "devDependencies": {
-    "@biomejs/biome": "2.6.6",
+    "@biomejs/biome": "2.6.7",
     "@tailwindcss/postcss": "^4.3.5",
     "@types/node": "^26.6.6",
     "@types/react": "^19.3.0",
