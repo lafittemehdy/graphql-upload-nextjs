@@ -22,7 +22,7 @@
     "@apollo/client": "^4.3.8",
     "@apollo/server": "^5.5.2",
     "@as-integrations/next": "^4.1.0",
-    "graphql": "^16.15.0",
+    "graphql": "^17.1.0",
     "graphql-upload-nextjs": "file:../..",
     "next": "16.4.6",
     "react": "19.3.1",
